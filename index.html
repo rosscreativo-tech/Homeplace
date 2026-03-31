@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cotizador Pro - Ross Creativo</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f5f5f5; }
+        .primary-bg { background-color: #5b301f; }
+        .primary-text { color: #5b301f; }
+        .secondary-bg { background-color: #dfdbd0; }
+        #pdf-render-container { position: absolute; left: -9999px; top: 0; background: white; width: 794px; height: 1123px; z-index: -1; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #5b301f; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // Configuración de Supabase
+        const SUPABASE_URL = 'TU_SUPABASE_URL';
+        const SUPABASE_ANON_KEY = 'TU_SUPABASE_ANON_KEY';
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        const Icon = ({ name, size = 18, className = "" }) => {
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
+            return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
+        };
+
+        function App() {
+            const [quotes, setQuotes] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
+            const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+            const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+
+            // Ajustes de Empresa (Persistidos en LocalStorage)
+            const defaultSettings = {
+                companyName: 'Ross Creativo',
+                address: 'Santo Domingo, Rep. Dom.',
+                phone: '+1 809-000-0000',
+                email: 'contacto@rosscreativo.com',
+                rnc: '132-00000-0',
+                bankInfo: 'Banco Popular\nCuenta: 000000000',
+                terms: 'Vigencia de 15 días. 50% anticipo.',
+                creatorName: 'Ross',
+                logo: null
+            };
+            const [settings, setSettings] = useState(() => {
+                const saved = localStorage.getItem('company_settings');
+                return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
+            });
+
+            // Formulario de Cotización
+            const [clientName, setClientName] = useState('');
+            const [clientPhone, setClientPhone] = useState('');
+            const [clientAddress, setClientAddress] = useState('');
+            const [dueDate, setDueDate] = useState('');
+            const [observations, setObservations] = useState('');
+            const [items, setItems] = useState([]);
+            const [newItem, setNewItem] = useState({ desc: '', qty: 1, price: '' }); 
+            const [tax, setTax] = useState(18); 
+            const [applyTax, setApplyTax] = useState(true); 
+            const [discountType, setDiscountType] = useState('percentage');
+            const [discountValue, setDiscountValue] = useState(0);
+            const [editingQuoteId, setEditingQuoteId] = useState(null); 
+            const [currentQuotePDF, setCurrentQuotePDF] = useState(null);
+
+            // Carga inicial desde Supabase
+            useEffect(() => {
+                fetchQuotes();
+            }, []);
+
+            const fetchQuotes = async () => {
+                setLoading(true);
+                const { data, error } = await supabase
+                    .from('quotes')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+                
+                if (error) console.error("Error cargando datos:", error);
+                else setQuotes(data || []);
+                setLoading(false);
+            };
+
+            const totals = useMemo(() => {
+                const sub = items.reduce((a, b) => a + (Number(b.qty) * Number(b.price)), 0);
+                const discountAmt = discountType === 'percentage' ? sub * (Number(discountValue) / 100) : Number(discountValue);
+                const postDiscount = Math.max(0, sub - discountAmt);
+                const tAmount = applyTax ? (postDiscount * (Number(tax) / 100)) : 0;
+                return { sub, discountAmt, postDiscount, tax: tAmount, total: postDiscount + tAmount };
+            }, [items, tax, applyTax, discountType, discountValue]);
+
+            const handleSaveQuote = async () => {
+                if (!clientName || items.length === 0) return alert("Completa los datos básicos.");
+                
+                const quoteData = {
+                    client_name: clientName,
+                    client_phone: clientPhone,
+                    client_address: clientAddress,
+                    due_date: dueDate || null,
+                    observations,
+                    items,
+                    tax_rate: tax,
+                    apply_tax: applyTax,
+                    discount_type: discountType,
+                    discount_value: Number(discountValue),
+                    discount_amount: totals.discountAmt,
+                    subtotal: totals.sub,
+                    tax_amount: totals.tax,
+                    total: totals.total,
+                    status: 'Pendiente'
+                };
+
+                if (editingQuoteId) {
+                    const { error } = await supabase.from('quotes').update(quoteData).eq('id', editingQuoteId);
+                    if (error) alert("Error al actualizar");
+                } else {
+                    quoteData.quote_id = `COT-${String(quotes.length + 1).padStart(4, '0')}`;
+                    const { error } = await supabase.from('quotes').insert([quoteData]);
+                    if (error) alert("Error al guardar");
+                }
+
+                setIsQuoteModalOpen(false);
+                resetQuoteForm();
+                fetchQuotes();
+            };
+
+            const handleDelete = async (id) => {
+                if (confirm("¿Eliminar esta cotización?")) {
+                    await supabase.from('quotes').delete().eq('id', id);
+                    fetchQuotes();
+                }
+            };
+
+            const resetQuoteForm = () => {
+                setClientName(''); setClientPhone(''); setClientAddress(''); setObservations(''); setDueDate('');
+                setItems([]); setEditingQuoteId(null); setDiscountValue(0);
+            };
+
+            const handleEditQuote = (q) => {
+                setClientName(q.client_name); setClientPhone(q.client_phone); setClientAddress(q.client_address);
+                setDueDate(q.due_date); setObservations(q.observations); setItems(q.items);
+                setDiscountType(q.discount_type); setDiscountValue(q.discount_value);
+                setTax(q.tax_rate); setApplyTax(q.apply_tax);
+                setEditingQuoteId(q.id);
+                setIsQuoteModalOpen(true);
+            };
+
+            if (loading) return <div className="h-screen flex items-center justify-center"><div className="loader"></div></div>;
+
+            return (
+                <div className="min-h-screen pb-10 bg-stone-100 relative">
+                    <header className="bg-white/80 backdrop-blur-md shadow-sm px-6 py-4 flex justify-between items-center sticky top-0 z-40">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg text-white primary-bg shadow-md"><Icon name="file-text" size={24} /></div>
+                            <div>
+                                <h1 className="font-black text-xl tracking-tighter primary-text leading-none">Cotizador Ross</h1>
+                                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Sistema de Gestión</span>
+                            </div>
+                        </div>
+                        <button onClick={() => setIsSettingsModalOpen(true)} className="flex items-center gap-2 p-2 rounded-xl text-stone-500 hover:bg-stone-100">
+                            <Icon name="settings" size={20} />
+                        </button>
+                    </header>
+
+                    <main className="max-w-5xl mx-auto p-6">
+                        <div className="flex justify-between items-center mb-8">
+                            <h2 className="text-3xl font-extrabold text-stone-800">Cotizaciones</h2>
+                            <button onClick={() => { resetQuoteForm(); setIsQuoteModalOpen(true); }} className="primary-bg text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg">
+                                <Icon name="plus" size={18} /> NUEVA
+                            </button>
+                        </div>
+
+                        <div className="grid gap-4">
+                            {quotes.map((q) => (
+                                <div key={q.id} className="bg-white rounded-2xl p-6 shadow-sm border border-stone-200 flex flex-col md:flex-row justify-between items-center gap-4">
+                                    <div className="flex-grow">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-[10px] font-black px-2 py-1 bg-stone-100 rounded text-stone-500 border">{q.quote_id}</span>
+                                            <span className="text-xs text-emerald-600 font-bold uppercase">{q.status}</span>
+                                        </div>
+                                        <h3 className="font-bold text-xl text-stone-800">{q.client_name}</h3>
+                                        <p className="text-xs text-stone-400">Creada: {new Date(q.created_at).toLocaleDateString()}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-2xl font-black primary-text mb-2">RD$ {q.total.toLocaleString()}</div>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => handleEditQuote(q)} className="p-2 bg-blue-50 text-blue-500 rounded-lg"><Icon name="edit" size={18}/></button>
+                                            <button onClick={() => handleDelete(q.id)} className="p-2 bg-rose-50 text-rose-500 rounded-lg"><Icon name="trash-2" size={18}/></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </main>
+
+                    {/* Modal de Cotización */}
+                    {isQuoteModalOpen && (
+                        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-[2rem] w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+                                <div className="p-6 primary-bg text-white flex justify-between">
+                                    <h3 className="font-bold uppercase tracking-widest">{editingQuoteId ? 'Editar' : 'Nueva'} Cotización</h3>
+                                    <button onClick={() => setIsQuoteModalOpen(false)}><Icon name="x" /></button>
+                                </div>
+                                <div className="p-8 overflow-y-auto flex-grow space-y-6">
+                                    <input className="w-full border p-3 rounded-xl" placeholder="Nombre del Cliente" value={clientName} onChange={e => setClientName(e.target.value)} />
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <input className="border p-3 rounded-xl" placeholder="Teléfono" value={clientPhone} onChange={e => setClientPhone(e.target.value)} />
+                                        <input type="date" className="border p-3 rounded-xl" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                                    </div>
+                                    
+                                    <div className="space-y-2">
+                                        <h4 className="font-bold text-xs uppercase text-stone-400">Productos</h4>
+                                        {items.map((it, i) => (
+                                            <div key={i} className="flex justify-between bg-stone-50 p-2 rounded-lg border">
+                                                <span>{it.qty}x {it.desc}</span>
+                                                <span className="font-bold">RD$ {(it.qty * it.price).toLocaleString()}</span>
+                                            </div>
+                                        ))}
+                                        <div className="flex gap-2">
+                                            <input className="flex-grow border p-2 rounded-lg" placeholder="Descripción" value={newItem.desc} onChange={e => setNewItem({...newItem, desc: e.target.value})} />
+                                            <input type="number" className="w-20 border p-2 rounded-lg" placeholder="Cant" value={newItem.qty} onChange={e => setNewItem({...newItem, qty: e.target.value})} />
+                                            <input type="number" className="w-28 border p-2 rounded-lg" placeholder="Precio" value={newItem.price} onChange={e => setNewItem({...newItem, price: e.target.value})} />
+                                            <button onClick={() => { if(newItem.desc) { setItems([...items, newItem]); setNewItem({desc:'', qty:1, price:''}); } }} className="bg-stone-200 px-4 rounded-lg font-bold">+</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="p-6 border-t bg-stone-50 flex justify-between items-center">
+                                    <div className="text-2xl font-black primary-text">Total: RD$ {totals.total.toLocaleString()}</div>
+                                    <button onClick={handleSaveQuote} className="primary-bg text-white px-8 py-3 rounded-xl font-bold uppercase">Guardar</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
