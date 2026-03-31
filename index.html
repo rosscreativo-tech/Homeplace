@@ -74,6 +74,9 @@
             const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
             const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
             const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+            const [isPDFPreviewOpen, setIsPDFPreviewOpen] = useState(false);
+            const [pdfPreviewQuote, setPdfPreviewQuote] = useState(null);
+            const [pdfPreviewDataUrl, setPdfPreviewDataUrl] = useState(null);
 
             const defaultSettings = {
                 companyName: 'Tu Empresa S.R.L.',
@@ -243,9 +246,27 @@
                 return { sub, discountAmt, postDiscount, tax: tAmount, total: postDiscount + tAmount };
             }, [items, tax, applyTax, discountType, discountValue]);
 
-            const generateQuoteNumber = () => {
-                const count = quotes.length + 1;
-                return `COT-${String(count).padStart(4, '0')}`;
+            const generateQuoteNumber = async () => {
+                if (!isDemo && supabase) {
+                    try {
+                        const year = new Date().getFullYear();
+                        const { data, error } = await supabase
+                            .from('quotes')
+                            .select('quote_id')
+                            .ilike('quote_id', `COT-${year}-%`)
+                            .order('quote_id', { ascending: false })
+                            .limit(1);
+                        if (!error && data) {
+                            const last = data[0]?.quote_id;
+                            const lastNum = last ? parseInt(last.split('-')[2] || '0', 10) : 0;
+                            return `COT-${year}-${String(lastNum + 1).padStart(4, '0')}`;
+                        }
+                    } catch(e) { /* fallback below */ }
+                }
+                // Fallback: year + timestamp suffix
+                const year = new Date().getFullYear();
+                const seq = String(quotes.length + 1).padStart(4, '0');
+                return `COT-${year}-${seq}`;
             };
 
             // 3. GUARDADO Y ACTUALIZACIÓN HACIA LA TABLA 'quotes'
@@ -277,7 +298,7 @@
                     }
                 } else {
                     const count = quotes.length + 1;
-                    quoteData.quote_id = `COT-${String(count).padStart(4, '0')}`;
+                    quoteData.quote_id = await generateQuoteNumber();
                     quoteData.date_str = new Date().toLocaleDateString('es-DO');
 
                     if (isDemo) {
@@ -344,7 +365,6 @@
             };
 
             const processPDF = async (quoteRaw, action) => {
-                // Normalize Supabase snake_case fields to the PDF template expectations
                 const quote = {
                     ...quoteRaw,
                     clientName: quoteRaw.client_name || quoteRaw.clientName || '',
@@ -367,10 +387,19 @@
                         const element = document.getElementById('pdf-template');
                         const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
                         const imgData = canvas.toDataURL('image/jpeg', 1.0);
+
+                        if (action === 'preview') {
+                            setPdfPreviewDataUrl(imgData);
+                            setPdfPreviewQuote(quote);
+                            setIsPDFPreviewOpen(true);
+                            setIsGeneratingPDF(false);
+                            setCurrentQuotePDF(null);
+                            return;
+                        }
+
                         const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
                         const pdfWidth = pdf.internal.pageSize.getWidth();
                         const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-                        
                         pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
                         const filename = `${quote.quoteId}_${quote.clientName.replace(/\s+/g, '_')}.pdf`;
 
@@ -392,11 +421,45 @@
                         setIsGeneratingPDF(false);
                         setCurrentQuotePDF(null);
                     }
-                }, 1000); 
+                }, 800); 
             };
 
             const handleDownloadPDF = (quote) => processPDF(quote, 'download');
             const handleShare = (quote) => processPDF(quote, 'share');
+            const handlePreviewPDF = (quote) => processPDF(quote, 'preview');
+
+            const handleDownloadFromPreview = () => {
+                if (!pdfPreviewDataUrl || !pdfPreviewQuote) return;
+                const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
+                const pdfWidth = pdf.internal.pageSize.getWidth();
+                const img = new Image();
+                img.src = pdfPreviewDataUrl;
+                img.onload = () => {
+                    const pdfHeight = (img.height * pdfWidth) / img.width;
+                    pdf.addImage(pdfPreviewDataUrl, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+                    pdf.save(`${pdfPreviewQuote.quoteId}_${pdfPreviewQuote.clientName.replace(/\s+/g, '_')}.pdf`);
+                };
+            };
+
+            const handleShareFromPreview = async () => {
+                if (!pdfPreviewDataUrl || !pdfPreviewQuote) return;
+                const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
+                const pdfWidth = pdf.internal.pageSize.getWidth();
+                const img = new Image();
+                img.src = pdfPreviewDataUrl;
+                img.onload = async () => {
+                    const pdfHeight = (img.height * pdfWidth) / img.width;
+                    pdf.addImage(pdfPreviewDataUrl, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+                    const filename = `${pdfPreviewQuote.quoteId}_${pdfPreviewQuote.clientName.replace(/\s+/g, '_')}.pdf`;
+                    const pdfBlob = pdf.output('blob');
+                    const file = new File([pdfBlob], filename, { type: 'application/pdf' });
+                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                        await navigator.share({ files: [file], title: `Cotización ${pdfPreviewQuote.quoteId}`, text: `Hola ${pdfPreviewQuote.clientName}, adjunto tu cotización.` });
+                    } else {
+                        pdf.save(filename);
+                    }
+                };
+            };
 
             const statusColors = {
                 Pendiente: 'bg-stone-100 text-stone-600 border-stone-200',
@@ -548,8 +611,8 @@
                                             <div className="flex flex-col items-end gap-3 w-full md:w-auto border-t md:border-none pt-4 md:pt-0">
                                                 <div className="text-3xl font-black primary-text">RD$ {(q.total || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</div>
                                                 <div className="flex gap-2">
-                                                    <button onClick={() => handleDownloadPDF(q)} className="px-4 py-2 bg-[#dfdbd0] text-[#5b301f] font-bold text-xs rounded-xl hover:brightness-95 transition-all flex items-center gap-2 shadow-sm" title="Descargar PDF">
-                                                        <Icon name="download" size={16} /> <span className="hidden md:inline">PDF</span>
+                                                    <button onClick={() => handlePreviewPDF(q)} className="px-4 py-2 bg-[#dfdbd0] text-[#5b301f] font-bold text-xs rounded-xl hover:brightness-95 transition-all flex items-center gap-2 shadow-sm" title="Vista previa PDF">
+                                                        <Icon name="eye" size={16} /> <span className="hidden md:inline">PDF</span>
                                                     </button>
                                                     <button onClick={() => handleShare(q)} className="px-4 py-2 bg-emerald-50 text-emerald-600 font-bold text-xs rounded-xl hover:bg-emerald-100 transition-all flex items-center gap-2 shadow-sm" title="Compartir">
                                                         <Icon name="share-2" size={16} />
@@ -638,8 +701,8 @@
                     )}
 
                     {isQuoteModalOpen && (
-                        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                            <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-3xl flex flex-col max-h-[95vh] overflow-hidden">
+                        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center md:p-4">
+                            <div className="bg-white md:rounded-[2rem] shadow-2xl w-full max-w-3xl flex flex-col h-full md:h-auto md:max-h-[95vh] overflow-hidden rounded-t-[2rem]">
                                 <div className="p-6 border-b flex justify-between items-center primary-bg text-white flex-shrink-0">
                                     <h3 className="font-black uppercase tracking-widest text-[11px] flex items-center gap-2">
                                         <Icon name={editingQuoteId ? "edit" : "file-plus"} size={16}/> 
@@ -780,6 +843,39 @@
                                         </button>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL VISTA PREVIA PDF */}
+                    {isPDFPreviewOpen && pdfPreviewDataUrl && (
+                        <div className="fixed inset-0 bg-stone-900/90 backdrop-blur-sm z-[100] flex flex-col">
+                            {/* Header */}
+                            <div className="flex items-center justify-between px-4 py-3 bg-stone-900 text-white flex-shrink-0">
+                                <div>
+                                    <div className="font-black text-sm uppercase tracking-widest">{pdfPreviewQuote?.quoteId}</div>
+                                    <div className="text-xs text-stone-400">{pdfPreviewQuote?.clientName}</div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button onClick={handleDownloadFromPreview} className="flex items-center gap-2 bg-[#5b301f] text-white px-4 py-2 rounded-xl font-bold text-xs hover:brightness-110 transition-all">
+                                        <Icon name="download" size={14} /> Descargar
+                                    </button>
+                                    <button onClick={handleShareFromPreview} className="flex items-center gap-2 bg-emerald-700 text-white px-4 py-2 rounded-xl font-bold text-xs hover:brightness-110 transition-all">
+                                        <Icon name="share-2" size={14} /> Compartir
+                                    </button>
+                                    <button onClick={() => { setIsPDFPreviewOpen(false); setPdfPreviewDataUrl(null); setPdfPreviewQuote(null); }} className="p-2 text-stone-400 hover:text-white ml-1">
+                                        <Icon name="x" size={22} />
+                                    </button>
+                                </div>
+                            </div>
+                            {/* Imagen preview */}
+                            <div className="flex-grow overflow-auto flex items-start justify-center p-4 bg-stone-800">
+                                <img 
+                                    src={pdfPreviewDataUrl} 
+                                    alt="Vista previa PDF" 
+                                    className="max-w-full shadow-2xl rounded"
+                                    style={{ maxWidth: '794px', width: '100%' }}
+                                />
                             </div>
                         </div>
                     )}
