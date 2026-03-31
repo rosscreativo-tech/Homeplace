@@ -210,9 +210,12 @@
                 localStorage.setItem('company_settings', JSON.stringify(settings));
                 if (supabase && !isDemo) {
                     try {
+                        // Si el logo es una URL (Storage) lo guardamos; si es base64 largo lo excluimos
+                        const isLogoUrl = settings.logo && settings.logo.startsWith('http');
+                        const dataToSave = isLogoUrl ? settings : (() => { const { logo, ...rest } = settings; return rest; })();
                         const { error } = await supabase
                             .from('settings')
-                            .upsert({ id: 1, data: settings }, { onConflict: 'id' });
+                            .upsert({ id: 1, data: dataToSave }, { onConflict: 'id' });
                         if (error) console.error("Error guardando ajustes:", error);
                     } catch(e) {
                         console.error("Error guardando ajustes:", e);
@@ -221,12 +224,50 @@
                 setIsSettingsModalOpen(false);
             };
 
-            const handleLogoUpload = (e) => {
+            const [uploadingLogo, setUploadingLogo] = useState(false);
+
+            const handleLogoUpload = async (e) => {
                 const file = e.target.files[0];
-                if (file) {
+                if (!file) return;
+
+                // Si no hay Supabase, usar base64 local como antes
+                if (!supabase || isDemo) {
                     const reader = new FileReader();
                     reader.onloadend = () => setSettings({ ...settings, logo: reader.result });
                     reader.readAsDataURL(file);
+                    return;
+                }
+
+                setUploadingLogo(true);
+                try {
+                    // Nombre único para evitar conflictos de caché
+                    const ext = file.name.split('.').pop();
+                    const filename = `logo-${Date.now()}.${ext}`;
+
+                    // Subir al bucket 'logos'
+                    const { error: uploadError } = await supabase.storage
+                        .from('logos')
+                        .upload(filename, file, { upsert: true, contentType: file.type });
+
+                    if (uploadError) throw uploadError;
+
+                    // Obtener URL pública
+                    const { data: urlData } = supabase.storage
+                        .from('logos')
+                        .getPublicUrl(filename);
+
+                    const publicUrl = urlData.publicUrl;
+                    setSettings(prev => ({ ...prev, logo: publicUrl }));
+
+                } catch (err) {
+                    console.error("Error subiendo logo:", err);
+                    alert("No se pudo subir el logo. Verifica que el bucket 'logos' existe y es público.");
+                    // Fallback a base64
+                    const reader = new FileReader();
+                    reader.onloadend = () => setSettings(prev => ({ ...prev, logo: reader.result }));
+                    reader.readAsDataURL(file);
+                } finally {
+                    setUploadingLogo(false);
                 }
             };
 
@@ -253,17 +294,15 @@
                         const { data, error } = await supabase
                             .from('quotes')
                             .select('quote_id')
-                            .ilike('quote_id', `COT-${year}-%`)
-                            .order('quote_id', { ascending: false })
-                            .limit(1);
+                            .ilike('quote_id', `COT-${year}-%`);
                         if (!error && data) {
-                            const last = data[0]?.quote_id;
-                            const lastNum = last ? parseInt(last.split('-')[2] || '0', 10) : 0;
+                            // Ordenar numéricamente para evitar problemas de orden alfabético
+                            const nums = data.map(r => parseInt((r.quote_id || '').split('-')[2] || '0', 10)).filter(n => !isNaN(n));
+                            const lastNum = nums.length > 0 ? Math.max(...nums) : 0;
                             return `COT-${year}-${String(lastNum + 1).padStart(4, '0')}`;
                         }
                     } catch(e) { /* fallback below */ }
                 }
-                // Fallback: year + timestamp suffix
                 const year = new Date().getFullYear();
                 const seq = String(quotes.length + 1).padStart(4, '0');
                 return `COT-${year}-${seq}`;
@@ -297,7 +336,6 @@
                         setQuotes(data || []);
                     }
                 } else {
-                    const count = quotes.length + 1;
                     quoteData.quote_id = await generateQuoteNumber();
                     quoteData.date_str = new Date().toLocaleDateString('es-DO');
 
@@ -667,9 +705,32 @@
                                             <label className="block text-xs font-bold text-stone-500 mb-1">Logo (PNG/JPG)</label>
                                             <div className="flex items-center gap-4">
                                                 {settings.logo && <img src={settings.logo} alt="Logo" className="h-12 w-auto object-contain bg-white border p-1 rounded-lg shadow-sm" />}
-                                                <input type="file" accept="image/png, image/jpeg" className="w-full bg-white border border-stone-200 rounded-xl p-2.5 outline-none focus:border-[#5b301f] text-xs file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-stone-50 file:text-stone-700 hover:file:bg-stone-100 cursor-pointer" onChange={handleLogoUpload} />
-                                                {settings.logo && <button onClick={() => setSettings({...settings, logo: null})} className="text-stone-300 hover:text-rose-500"><Icon name="trash-2" size={18} /></button>}
+                                                <div className="flex-grow relative">
+                                                    <input 
+                                                        type="file" 
+                                                        accept="image/png, image/jpeg" 
+                                                        disabled={uploadingLogo}
+                                                        className="w-full bg-white border border-stone-200 rounded-xl p-2.5 outline-none focus:border-[#5b301f] text-xs file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-stone-50 file:text-stone-700 hover:file:bg-stone-100 cursor-pointer disabled:opacity-50" 
+                                                        onChange={handleLogoUpload} 
+                                                    />
+                                                    {uploadingLogo && (
+                                                        <div className="absolute inset-0 bg-white/80 rounded-xl flex items-center justify-center gap-2 text-xs font-bold text-[#5b301f]">
+                                                            <div className="w-4 h-4 border-2 border-[#5b301f] border-t-transparent rounded-full animate-spin"></div>
+                                                            Subiendo logo...
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                {settings.logo && !uploadingLogo && (
+                                                    <button onClick={() => setSettings({...settings, logo: null})} className="text-stone-300 hover:text-rose-500 flex-shrink-0">
+                                                        <Icon name="trash-2" size={18} />
+                                                    </button>
+                                                )}
                                             </div>
+                                            {settings.logo && settings.logo.startsWith('http') && (
+                                                <p className="text-[10px] text-emerald-600 font-bold mt-1 flex items-center gap-1">
+                                                    <Icon name="cloud" size={12} /> Logo guardado en la nube
+                                                </p>
+                                            )}
                                         </div>
                                         <div className="grid grid-cols-2 gap-4">
                                             <div><label className="block text-xs font-bold text-stone-500 mb-1">Nombre de Empresa</label>
