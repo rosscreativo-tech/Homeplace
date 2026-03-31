@@ -1,198 +1,915 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Cotizador - Supabase</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cotizador - Diseño Lite</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap');
+        
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #f5f5f5;
+        }
+        
+        .primary-bg { background-color: #5b301f; }
+        .primary-text { color: #5b301f; }
+        .secondary-bg { background-color: #dfdbd0; }
+        .secondary-text { color: #dfdbd0; }
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+        .pdf-font-serif { font-family: 'Playfair Display', serif; }
+        .pdf-font-sans { font-family: 'Inter', sans-serif; }
+        
+        #pdf-render-container {
+            position: absolute;
+            left: -9999px;
+            top: 0;
+            background: white;
+            width: 794px;
+            height: 1123px;
+            overflow: hidden;
+            z-index: -1;
+        }
 
-<script src="https://unpkg.com/lucide@latest"></script>
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #5b301f;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
 </head>
-
 <body>
-<div id="root"></div>
+    <div id="root"></div>
 
-<script type="text/babel">
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
 
-const { useState, useEffect, useMemo } = React;
+        const Icon = ({ name, size = 18, className = "" }) => {
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
+            return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
+        };
 
-function App(){
+        function App() {
+            const [supabase, setSupabase] = useState(null);
+            const [quotes, setQuotes] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [isDemo, setIsDemo] = useState(false);
 
-const [db,setDb]=useState(null);
-const [quotes,setQuotes]=useState([]);
-const [loading,setLoading]=useState(true);
-const [isDemo,setIsDemo]=useState(false);
+            const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
+            const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+            const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
-const [clientName,setClientName]=useState("");
-const [items,setItems]=useState([]);
-const [editingQuoteId,setEditingQuoteId]=useState(null);
+            const defaultSettings = {
+                companyName: 'Tu Empresa S.R.L.',
+                address: 'Calle Principal 123, Ensanche, Ciudad',
+                phone: '+1 809 123 4567',
+                email: 'contacto@tuempresa.com',
+                rnc: '132-45678-9',
+                bankInfo: 'Banco Popular\nCuenta Corriente: 123456789\nA nombre de: Tu Empresa',
+                terms: 'Los precios expresados en este documento tienen una vigencia de 15 días. El pago debe realizarse 50% al iniciar y 50% contra entrega.',
+                creatorName: 'Juan Pérez',
+                logo: null
+            };
+            const [settings, setSettings] = useState(() => {
+                const saved = localStorage.getItem('company_settings');
+                return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
+            });
+            const [settingsLoaded, setSettingsLoaded] = useState(false);
 
-const [newItem,setNewItem]=useState({desc:"",qty:1,price:""});
+            const [clientName, setClientName] = useState('');
+            const [clientPhone, setClientPhone] = useState('');
+            const [clientAddress, setClientAddress] = useState('');
+            const [dueDate, setDueDate] = useState('');
+            const [observations, setObservations] = useState('');
+            const [items, setItems] = useState([]);
+            const [newItem, setNewItem] = useState({ desc: '', qty: 1, price: '' }); 
+            
+            const [tax, setTax] = useState(18); 
+            const [applyTax, setApplyTax] = useState(true); 
+            
+            const [discountType, setDiscountType] = useState('percentage'); 
+            const [discountValue, setDiscountValue] = useState(0);
 
-const totals = useMemo(()=>{
-    const sub = items.reduce((a,b)=>a+(b.qty*b.price),0);
-    return {sub,total:sub};
-},[items]);
+            const [editingQuoteId, setEditingQuoteId] = useState(null); 
+            const [currentQuotePDF, setCurrentQuotePDF] = useState(null);
 
-// 🔥 INIT SUPABASE
-useEffect(()=>{
-const init = async()=>{
-try{
-const supabaseUrl="https://ghzlohohenxihfzqhebz.supabase.co";
-const supabaseKey="sb_publishable_UBrBbtO4tOG531JuwhXXCw_pugcTYBo";
+            // 1. INICIALIZACIÓN DE SUPABASE
+            useEffect(() => {
+                const init = async () => {
+                    try {
+                        const SUPABASE_URL = "https://ghzlohohenxihfzqhebz.supabase.co";
+                        const SUPABASE_KEY = "sb_publishable_UBrBbtO4tOG531JuwhXXCw_pugcTYBo";
+                        const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+                        setSupabase(client);
 
-const supabase = window.supabase.createClient(supabaseUrl,supabaseKey);
+                        // Cargar ajustes desde Supabase
+                        const { data: settingsData, error: settingsError } = await client
+                            .from('settings')
+                            .select('*')
+                            .eq('id', 1)
+                            .single();
 
-setDb(supabase);
+                        if (!settingsError && settingsData && settingsData.data) {
+                            setSettings({ ...defaultSettings, ...settingsData.data });
+                            localStorage.setItem('company_settings', JSON.stringify(settingsData.data));
+                        }
+                        setSettingsLoaded(true);
 
-}catch(e){
-console.error(e);
-setIsDemo(true);
-setQuotes(JSON.parse(localStorage.getItem("demo_quotes")||"[]"));
-}finally{
-setLoading(false);
-}
-};
-init();
-},[]);
+                        // Cargar cotizaciones
+                        const { data: quotesData, error: quotesError } = await client
+                            .from('quotes')
+                            .select('*')
+                            .order('created_at', { ascending: false });
 
-// 🔥 GET DATA
-useEffect(()=>{
-if(!db||isDemo)return;
+                        if (quotesError) throw quotesError;
+                        setQuotes(quotesData || []);
 
-const fetchData=async()=>{
-const {data,error}=await db.from("quotes").select("*").order("createdAt",{ascending:false});
+                    } catch (e) {
+                        console.error("Error al inicializar Supabase:", e);
+                        setIsDemo(true);
+                        const localData = JSON.parse(localStorage.getItem('demo_quotes') || '[]');
+                        setQuotes(localData);
+                        setSettingsLoaded(true);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                init();
+            }, []);
 
-if(error){
-console.error(error);
-setIsDemo(true);
-}else{
-setQuotes(data);
-}
-};
+            useEffect(() => {
+                if (isQuoteModalOpen && !editingQuoteId && !dueDate) {
+                    const today = new Date();
+                    today.setDate(today.getDate() + 15);
+                    setDueDate(today.toISOString().split('T')[0]);
+                }
+            }, [isQuoteModalOpen]);
 
-fetchData();
-},[db,isDemo]);
+            // 2. SUSCRIPCIÓN EN TIEMPO REAL DESDE 'quotes'
+            useEffect(() => {
+                if (!supabase || isDemo) return;
+                const channel = supabase
+                    .channel('quotes-changes')
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, async () => {
+                        const { data } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
+                        setQuotes(data || []);
+                    })
+                    .subscribe();
+                return () => supabase.removeChannel(channel);
+            }, [supabase, isDemo]);
 
-// 🔥 SAVE
-const handleSave = async()=>{
-if(!clientName||items.length===0)return alert("Completa datos");
+            const stats = useMemo(() => {
+                const now = new Date();
+                const currentMonth = now.getMonth();
+                const currentYear = now.getFullYear();
+                
+                let totalCotizado = 0;
+                let aceptadasFacturadas = 0;
+                let vencimientos = 0;
 
-const quoteData={
-clientName,
-items,
-total:totals.total,
-createdAt:Date.now()
-};
+                quotes.forEach(q => {
+                    const d = new Date(q.created_at || q.createdAt || Date.now());
+                    if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+                        totalCotizado += q.total || 0;
+                    }
+                    if (q.status === 'Aceptada' || q.status === 'Facturada') {
+                        aceptadasFacturadas++;
+                    }
+                    const dueDate = q.due_date || q.dueDate;
+                    if (dueDate && q.status !== 'Aceptada' && q.status !== 'Facturada') {
+                        const due = new Date(dueDate);
+                        const diffDays = Math.ceil((due - now) / (1000 * 60 * 60 * 24));
+                        if (diffDays >= 0 && diffDays <= 7) vencimientos++;
+                    }
+                });
 
-if(editingQuoteId){
+                const tasaCierre = quotes.length > 0 ? ((aceptadasFacturadas / quotes.length) * 100).toFixed(1) : 0;
+                return { totalCotizado, tasaCierre, vencimientos };
+            }, [quotes]);
 
-if(isDemo){
-const updated=quotes.map(q=>q.id===editingQuoteId?{...q,...quoteData}:q);
-setQuotes(updated);
-localStorage.setItem("demo_quotes",JSON.stringify(updated));
-}else{
-await db.from("quotes").update(quoteData).eq("id",editingQuoteId);
-}
+            const handleSaveSettings = async () => {
+                localStorage.setItem('company_settings', JSON.stringify(settings));
+                if (supabase && !isDemo) {
+                    try {
+                        const { error } = await supabase
+                            .from('settings')
+                            .upsert({ id: 1, data: settings }, { onConflict: 'id' });
+                        if (error) console.error("Error guardando ajustes:", error);
+                    } catch(e) {
+                        console.error("Error guardando ajustes:", e);
+                    }
+                }
+                setIsSettingsModalOpen(false);
+            };
 
-}else{
+            const handleLogoUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => setSettings({ ...settings, logo: reader.result });
+                    reader.readAsDataURL(file);
+                }
+            };
 
-if(isDemo){
-const newQ={...quoteData,id:Date.now().toString()};
-const updated=[newQ,...quotes];
-setQuotes(updated);
-localStorage.setItem("demo_quotes",JSON.stringify(updated));
-}else{
-await db.from("quotes").insert([quoteData]);
-}
-}
+            const totals = useMemo(() => {
+                const sub = items.reduce((a, b) => a + (Number(b.qty) * Number(b.price)), 0);
+                
+                let discountAmt = 0;
+                if (Number(discountValue) > 0) {
+                    discountAmt = discountType === 'percentage' 
+                        ? sub * (Number(discountValue) / 100) 
+                        : Number(discountValue);
+                }
+                
+                const postDiscount = Math.max(0, sub - discountAmt);
+                const tAmount = applyTax ? (postDiscount * Number(tax)) / 100 : 0;
+                
+                return { sub, discountAmt, postDiscount, tax: tAmount, total: postDiscount + tAmount };
+            }, [items, tax, applyTax, discountType, discountValue]);
 
-setClientName("");
-setItems([]);
-setEditingQuoteId(null);
-};
+            const generateQuoteNumber = () => {
+                const count = quotes.length + 1;
+                return `COT-${String(count).padStart(4, '0')}`;
+            };
 
-// 🔥 DELETE
-const handleDelete = async(id)=>{
+            // 3. GUARDADO Y ACTUALIZACIÓN HACIA LA TABLA 'quotes'
+            const handleSaveQuote = async () => {
+                if (!clientName || items.length === 0) {
+                    alert("Por favor, completa el nombre del cliente y agrega al menos un producto o servicio.");
+                    return;
+                }
+                
+                const quoteData = {
+                    client_name: clientName, client_phone: clientPhone, client_address: clientAddress,
+                    due_date: dueDate || null, observations, items: JSON.stringify(items),
+                    tax_rate: tax, apply_tax: applyTax, discount_type: discountType,
+                    discount_value: discountValue, discount_amount: totals.discountAmt,
+                    subtotal: totals.sub, tax_amount: totals.tax, total: totals.total,
+                    status: editingQuoteId ? quotes.find(q=> q.id === editingQuoteId)?.status || 'Pendiente' : 'Pendiente'
+                };
 
-if(isDemo){
-const filtered=quotes.filter(q=>q.id!==id);
-setQuotes(filtered);
-localStorage.setItem("demo_quotes",JSON.stringify(filtered));
-}else{
-await db.from("quotes").delete().eq("id",id);
-setQuotes(quotes.filter(q=>q.id!==id));
-}
+                if (editingQuoteId) {
+                    if (isDemo) {
+                        const updated = quotes.map(q => q.id === editingQuoteId ? { ...q, ...quoteData } : q);
+                        setQuotes(updated);
+                        localStorage.setItem('demo_quotes', JSON.stringify(updated));
+                    } else {
+                        const { error } = await supabase.from('quotes').update(quoteData).eq('id', editingQuoteId);
+                        if (error) { alert("Error al actualizar: " + error.message); return; }
+                        const { data } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
+                        setQuotes(data || []);
+                    }
+                } else {
+                    const count = quotes.length + 1;
+                    quoteData.quote_id = `COT-${String(count).padStart(4, '0')}`;
+                    quoteData.date_str = new Date().toLocaleDateString('es-DO');
 
-};
+                    if (isDemo) {
+                        const newQuote = { ...quoteData, id: Date.now().toString() };
+                        const updated = [newQuote, ...quotes];
+                        setQuotes(updated);
+                        localStorage.setItem('demo_quotes', JSON.stringify(updated));
+                    } else {
+                        const { error } = await supabase.from('quotes').insert([quoteData]);
+                        if (error) { alert("Error al guardar: " + error.message); return; }
+                        const { data } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
+                        setQuotes(data || []);
+                    }
+                }
 
-// 🔥 UI
-if(loading) return <div>Cargando...</div>;
+                setIsQuoteModalOpen(false);
+                resetQuoteForm();
+            };
 
-return(
-<div className="p-6">
+            const handleEditQuote = (quote) => {
+                setClientName(quote.client_name || quote.clientName || ''); 
+                setClientPhone(quote.client_phone || quote.clientPhone || '');
+                setClientAddress(quote.client_address || quote.clientAddress || ''); 
+                setDueDate(quote.due_date || quote.dueDate || ''); 
+                setObservations(quote.observations || ''); 
+                const parsedItems = typeof quote.items === 'string' ? JSON.parse(quote.items) : (quote.items || []);
+                setItems(parsedItems);
+                setNewItem({ desc: '', qty: 1, price: '' });
+                setTax(quote.tax_rate !== undefined ? quote.tax_rate : (quote.taxRate !== undefined ? quote.taxRate : 18));
+                setApplyTax(quote.apply_tax !== undefined ? quote.apply_tax : (quote.applyTax !== undefined ? quote.applyTax : true));
+                setDiscountType(quote.discount_type || quote.discountType || 'percentage');
+                setDiscountValue(quote.discount_value || quote.discountValue || 0);
+                setEditingQuoteId(quote.id);
+                setIsQuoteModalOpen(true);
+            };
 
-<h1 className="text-2xl font-bold mb-4">Cotizador</h1>
+            const handleDuplicateQuote = (quote) => {
+                handleEditQuote(quote);
+                setEditingQuoteId(null); 
+                const today = new Date();
+                today.setDate(today.getDate() + 15);
+                setDueDate(today.toISOString().split('T')[0]);
+            };
 
-<input
-placeholder="Cliente"
-className="border p-2 mb-2 w-full"
-value={clientName}
-onChange={e=>setClientName(e.target.value)}
-/>
+            // 4. ACTUALIZACIÓN DEL ESTADO HACIA LA TABLA 'quotes'
+            const handleUpdateStatus = async (id, newStatus) => {
+                if (isDemo) {
+                    const updated = quotes.map(q => q.id === id ? { ...q, status: newStatus } : q);
+                    setQuotes(updated);
+                    localStorage.setItem('demo_quotes', JSON.stringify(updated));
+                } else {
+                    const { error } = await supabase.from('quotes').update({ status: newStatus }).eq('id', id);
+                    if (!error) {
+                        setQuotes(prev => prev.map(q => q.id === id ? { ...q, status: newStatus } : q));
+                    }
+                }
+            };
 
-<div className="flex gap-2 mb-4">
-<input placeholder="Desc"
-value={newItem.desc}
-onChange={e=>setNewItem({...newItem,desc:e.target.value})}
-/>
-<input type="number"
-value={newItem.qty}
-onChange={e=>setNewItem({...newItem,qty:e.target.value})}
-/>
-<input type="number"
-value={newItem.price}
-onChange={e=>setNewItem({...newItem,price:e.target.value})}
-/>
+            const resetQuoteForm = () => {
+                setClientName(''); setClientPhone(''); setClientAddress(''); setObservations(''); setDueDate('');
+                setItems([]); setNewItem({ desc: '', qty: 1, price: '' }); setTax(18); setApplyTax(true);
+                setDiscountType('percentage'); setDiscountValue(0);
+                setEditingQuoteId(null);
+            };
 
-<button onClick={()=>{
-setItems([...items,newItem]);
-setNewItem({desc:"",qty:1,price:""});
-}}>+</button>
-</div>
+            const processPDF = async (quoteRaw, action) => {
+                // Normalize Supabase snake_case fields to the PDF template expectations
+                const quote = {
+                    ...quoteRaw,
+                    clientName: quoteRaw.client_name || quoteRaw.clientName || '',
+                    clientPhone: quoteRaw.client_phone || quoteRaw.clientPhone || '',
+                    clientAddress: quoteRaw.client_address || quoteRaw.clientAddress || '',
+                    dueDate: quoteRaw.due_date || quoteRaw.dueDate || '',
+                    quoteId: quoteRaw.quote_id || quoteRaw.quoteId || '',
+                    dateStr: quoteRaw.date_str || quoteRaw.dateStr || new Date(quoteRaw.created_at || Date.now()).toLocaleDateString('es-DO'),
+                    items: typeof quoteRaw.items === 'string' ? JSON.parse(quoteRaw.items) : (quoteRaw.items || []),
+                    taxRate: quoteRaw.tax_rate !== undefined ? quoteRaw.tax_rate : (quoteRaw.taxRate !== undefined ? quoteRaw.taxRate : 18),
+                    applyTax: quoteRaw.apply_tax !== undefined ? quoteRaw.apply_tax : (quoteRaw.applyTax !== undefined ? quoteRaw.applyTax : true),
+                    discountAmount: quoteRaw.discount_amount || quoteRaw.discountAmount || 0,
+                    taxAmount: quoteRaw.tax_amount || quoteRaw.taxAmount || 0,
+                };
+                setIsGeneratingPDF(true);
+                setCurrentQuotePDF(quote);
+                
+                setTimeout(async () => {
+                    try {
+                        const element = document.getElementById('pdf-template');
+                        const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+                        const imgData = canvas.toDataURL('image/jpeg', 1.0);
+                        const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
+                        const pdfWidth = pdf.internal.pageSize.getWidth();
+                        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                        
+                        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+                        const filename = `${quote.quoteId}_${quote.clientName.replace(/\s+/g, '_')}.pdf`;
 
-<button onClick={handleSave} className="bg-black text-white p-2">
-Guardar
-</button>
+                        if (action === 'download') pdf.save(filename);
+                        else if (action === 'share') {
+                            const pdfBlob = pdf.output('blob');
+                            const file = new File([pdfBlob], filename, { type: 'application/pdf' });
+                            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                                await navigator.share({ files: [file], title: `Cotización ${quote.quoteId}`, text: `Hola ${quote.clientName}, adjunto tu cotización.` });
+                            } else {
+                                alert("Tu dispositivo no soporta compartir. El PDF se descargará.");
+                                pdf.save(filename);
+                            }
+                        }
+                    } catch (error) {
+                        console.error("Error generando PDF:", error);
+                        alert("Hubo un error al generar el PDF.");
+                    } finally {
+                        setIsGeneratingPDF(false);
+                        setCurrentQuotePDF(null);
+                    }
+                }, 1000); 
+            };
 
-<hr className="my-6"/>
+            const handleDownloadPDF = (quote) => processPDF(quote, 'download');
+            const handleShare = (quote) => processPDF(quote, 'share');
 
-{quotes.map(q=>(
-<div key={q.id} className="border p-3 mb-2">
+            const statusColors = {
+                Pendiente: 'bg-stone-100 text-stone-600 border-stone-200',
+                Aceptada: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+                Facturada: 'bg-blue-100 text-blue-700 border-blue-200',
+                Rechazada: 'bg-rose-100 text-rose-700 border-rose-200'
+            };
 
-<h3>{q.clientName}</h3>
-<p>Total: {q.total}</p>
+            if (loading) return (
+                <div className="h-screen flex items-center justify-center flex-col gap-4">
+                    <div className="loader"></div>
+                    <span className="font-bold text-xs uppercase tracking-widest primary-text">Cargando...</span>
+                </div>
+            );
 
-<button onClick={()=>handleDelete(q.id)}>Eliminar</button>
+            return (
+                <div className="min-h-screen pb-10 bg-stone-100 font-sans relative">
+                    {settings.logo && (
+                        <div className="fixed inset-0 pointer-events-none opacity-[0.12] z-0" 
+                             style={{ backgroundImage: `url(${settings.logo})`, backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundSize: window.innerWidth < 768 ? '80%' : '40%' }} />
+                    )}
 
-</div>
-))}
+                    {isGeneratingPDF && (
+                        <div className="fixed inset-0 bg-stone-900/80 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center text-white">
+                            <div className="loader mb-4 border-t-white"></div>
+                            <h2 className="text-xl font-bold">Generando Documento...</h2>
+                            <p className="text-sm text-stone-300">Preparando el diseño PDF.</p>
+                        </div>
+                    )}
 
-</div>
-);
-}
+                    {isDemo && (
+                        <div className="bg-amber-600 text-white text-[10px] py-1 text-center font-bold uppercase tracking-widest no-print">
+                            Modo Local (Revisa las reglas de seguridad de Firestore si Firebase está conectado)
+                        </div>
+                    )}
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+                    <header className="bg-white/80 backdrop-blur-md shadow-sm px-6 py-4 flex justify-between items-center sticky top-0 z-40 no-print">
+                        <div className="flex items-center gap-3">
+                            {settings.logo ? (
+                                <img src={settings.logo} alt="Logo" className="h-10 w-auto object-contain mr-1" />
+                            ) : (
+                                <div className="p-2 rounded-lg text-white primary-bg shadow-md"><Icon name="file-text" size={24} /></div>
+                            )}
+                            <div>
+                                <h1 className="font-black text-xl tracking-tighter primary-text leading-none">Cotizador</h1>
+                                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{settings.companyName}</span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button 
+                                onClick={() => setIsSettingsModalOpen(true)} 
+                                className="flex items-center gap-2 p-2.5 rounded-xl text-stone-500 hover:bg-stone-100 transition-colors"
+                            >
+                                <Icon name="settings" size={20} />
+                                <span className="text-[10px] font-bold uppercase tracking-widest">Ajustes</span>
+                            </button>
+                        </div>
+                    </header>
 
-</script>
+                    <main className="max-w-5xl mx-auto p-6 no-print mt-2 relative z-10">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                            <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm flex items-center gap-4">
+                                <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Icon name="dollar-sign" size={24} /></div>
+                                <div>
+                                    <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Cotizado (Este Mes)</div>
+                                    <div className="text-xl font-black text-stone-800">RD$ {stats.totalCotizado.toLocaleString('en-US', {minimumFractionDigits:2})}</div>
+                                </div>
+                            </div>
+                            <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm flex items-center gap-4">
+                                <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl"><Icon name="pie-chart" size={24} /></div>
+                                <div>
+                                    <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Tasa de Cierre</div>
+                                    <div className="text-xl font-black text-stone-800">{stats.tasaCierre}%</div>
+                                </div>
+                            </div>
+                            <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm flex items-center gap-4">
+                                <div className="p-3 bg-amber-50 text-amber-600 rounded-xl"><Icon name="clock" size={24} /></div>
+                                <div>
+                                    <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Vencen Próximamente</div>
+                                    <div className="text-xl font-black text-stone-800">{stats.vencimientos} <span className="text-sm font-normal text-stone-500">en 7 días</span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap justify-between items-end gap-4 mb-6">
+                            <div>
+                                <h2 className="text-3xl font-extrabold text-stone-800 tracking-tight">Cotizaciones</h2>
+                                <p className="text-stone-500 text-sm mt-1">Gestiona, filtra y duplica tus cotizaciones.</p>
+                            </div>
+                            <button onClick={() => setIsQuoteModalOpen(true)} className="primary-bg text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg hover:shadow-xl transition-all">
+                                <Icon name="plus" size={18} /> NUEVA COTIZACIÓN
+                            </button>
+                        </div>
+
+                        <div className="grid gap-4">
+                            {quotes.length === 0 ? (
+                                <div className="bg-white border border-stone-200 rounded-[2rem] p-20 text-center shadow-sm">
+                                    <Icon name="file-text" size={40} className="mx-auto text-stone-200 mb-4" />
+                                    <p className="text-stone-400 font-bold uppercase text-xs tracking-widest">Sin cotizaciones registradas</p>
+                                </div>
+                            ) : (
+                                quotes.map((q, idx) => {
+                                    const dueDateVal = q.due_date || q.dueDate;
+                                    const isExpired = dueDateVal && new Date(dueDateVal) < new Date(new Date().setHours(0,0,0,0));
+                                    const currentStatus = q.status || 'Pendiente';
+                                    const clientName_ = q.client_name || q.clientName || '';
+                                    const clientPhone_ = q.client_phone || q.clientPhone || '';
+                                    const clientAddress_ = q.client_address || q.clientAddress || '';
+                                    const quoteIdStr = q.quote_id || q.quoteId || '';
+                                    const dateStr_ = q.date_str || q.dateStr || new Date(q.created_at || q.createdAt || Date.now()).toLocaleDateString('es-DO');
+                                    
+                                    return (
+                                        <div key={q.id || idx} className={`bg-white rounded-2xl p-6 shadow-sm border ${isExpired && currentStatus==='Pendiente' ? 'border-rose-200 bg-rose-50/30' : 'border-stone-200'} flex flex-col md:flex-row justify-between items-center gap-6 hover:shadow-md transition-shadow relative overflow-hidden`}>
+                                            {isExpired && currentStatus === 'Pendiente' && (
+                                                <div className="absolute top-0 right-0 bg-rose-600 text-white text-[9px] font-black px-4 py-1 rounded-bl-xl uppercase tracking-tighter shadow-sm z-20">
+                                                    Vencida
+                                                </div>
+                                            )}
+                                            
+                                            <div className="flex-grow space-y-2 w-full">
+                                                <div className="flex items-center gap-3 flex-wrap">
+                                                    <span className="text-[10px] font-black px-3 py-1 bg-stone-100 text-stone-600 rounded-lg uppercase border border-stone-200">{quoteIdStr}</span>
+                                                    
+                                                    <select 
+                                                        value={currentStatus}
+                                                        onChange={(e) => handleUpdateStatus(q.id, e.target.value)}
+                                                        className={`text-[10px] font-bold px-2 py-1 rounded-lg uppercase border outline-none cursor-pointer ${statusColors[currentStatus]}`}
+                                                    >
+                                                        <option value="Pendiente">Pendiente</option>
+                                                        <option value="Aceptada">Aceptada</option>
+                                                        <option value="Facturada">Facturada</option>
+                                                        <option value="Rechazada">Rechazada</option>
+                                                    </select>
+
+                                                    <span className="text-xs text-stone-400 font-medium ml-2">Creada: {dateStr_}</span>
+                                                    {dueDateVal && (
+                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${isExpired && currentStatus==='Pendiente' ? 'text-rose-600 bg-rose-100' : 'text-stone-500 bg-stone-100'}`}>
+                                                            Vence: {new Date(dueDateVal).toLocaleDateString('es-DO')}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <h3 className="font-bold text-xl text-stone-800 leading-tight">{clientName_}</h3>
+                                                <div className="flex flex-wrap items-center gap-4 text-stone-500">
+                                                    <div className="flex items-center gap-1.5"><Icon name="phone" size={14} /><span className="text-xs font-medium">{clientPhone_ || 'N/A'}</span></div>
+                                                    <div className="flex items-center gap-1.5"><Icon name="map-pin" size={14} /><span className="text-xs font-medium">{clientAddress_ || 'N/A'}</span></div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="flex flex-col items-end gap-3 w-full md:w-auto border-t md:border-none pt-4 md:pt-0">
+                                                <div className="text-3xl font-black primary-text">RD$ {(q.total || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</div>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => handleDownloadPDF(q)} className="px-4 py-2 bg-[#dfdbd0] text-[#5b301f] font-bold text-xs rounded-xl hover:brightness-95 transition-all flex items-center gap-2 shadow-sm" title="Descargar PDF">
+                                                        <Icon name="download" size={16} /> <span className="hidden md:inline">PDF</span>
+                                                    </button>
+                                                    <button onClick={() => handleShare(q)} className="px-4 py-2 bg-emerald-50 text-emerald-600 font-bold text-xs rounded-xl hover:bg-emerald-100 transition-all flex items-center gap-2 shadow-sm" title="Compartir">
+                                                        <Icon name="share-2" size={16} />
+                                                    </button>
+                                                    <button onClick={() => handleDuplicateQuote(q)} className="p-2 bg-purple-50 text-purple-600 rounded-xl hover:bg-purple-100 transition-all" title="Duplicar">
+                                                        <Icon name="copy" size={18} />
+                                                    </button>
+                                                    <button onClick={() => handleEditQuote(q)} className="p-2 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-100 transition-all" title="Editar">
+                                                        <Icon name="edit-2" size={18} />
+                                                    </button>
+                                                    <button onClick={async () => { if(confirm("¿Eliminar?")) { 
+                                                        if (!isDemo && supabase) {
+                                                            await supabase.from('quotes').delete().eq('id', q.id);
+                                                        }
+                                                        const filtered = quotes.filter((_, i) => i !== idx); 
+                                                        setQuotes(filtered); 
+                                                        if(isDemo) localStorage.setItem('demo_quotes', JSON.stringify(filtered)); 
+                                                    } }} className="p-2 bg-stone-50 text-stone-400 rounded-xl hover:text-rose-600 transition-all" title="Eliminar">
+                                                        <Icon name="trash-2" size={18} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </main>
+
+                    <footer className="py-12 text-center no-print relative z-10">
+                        <p className="text-[10px] font-bold text-stone-400 uppercase tracking-[0.2em]">
+                            Desarrollado por Ross Creativo 2026
+                        </p>
+                    </footer>
+
+                    {/* MODALES REUTILIZADOS SIN CAMBIOS... */}
+                    {isSettingsModalOpen && (
+                        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
+                                <div className="p-6 border-b flex justify-between items-center bg-stone-50 flex-shrink-0">
+                                    <div className="flex items-center gap-2 primary-text">
+                                        <Icon name="settings" size={20} />
+                                        <h3 className="font-black uppercase tracking-widest text-xs">Ajustes Generales</h3>
+                                    </div>
+                                    <button onClick={() => setIsSettingsModalOpen(false)} className="text-stone-400 hover:text-stone-800"><Icon name="x" size={20} /></button>
+                                </div>
+                                
+                                <div className="p-8 overflow-y-auto space-y-6 text-sm flex-grow min-h-0">
+                                    <div>
+                                        <label className="block text-xs font-black text-[#5b301f] uppercase tracking-widest mb-3">Datos de la Empresa</label>
+                                        <div className="mb-4">
+                                            <label className="block text-xs font-bold text-stone-500 mb-1">Logo (PNG/JPG)</label>
+                                            <div className="flex items-center gap-4">
+                                                {settings.logo && <img src={settings.logo} alt="Logo" className="h-12 w-auto object-contain bg-white border p-1 rounded-lg shadow-sm" />}
+                                                <input type="file" accept="image/png, image/jpeg" className="w-full bg-white border border-stone-200 rounded-xl p-2.5 outline-none focus:border-[#5b301f] text-xs file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-stone-50 file:text-stone-700 hover:file:bg-stone-100 cursor-pointer" onChange={handleLogoUpload} />
+                                                {settings.logo && <button onClick={() => setSettings({...settings, logo: null})} className="text-stone-300 hover:text-rose-500"><Icon name="trash-2" size={18} /></button>}
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div><label className="block text-xs font-bold text-stone-500 mb-1">Nombre de Empresa</label>
+                                            <input className="w-full border rounded-xl p-2.5 outline-none focus:border-[#5b301f]" value={settings.companyName} onChange={e=>setSettings({...settings, companyName: e.target.value})} /></div>
+                                            <div><label className="block text-xs font-bold text-stone-500 mb-1">RNC / Identificación</label>
+                                            <input className="w-full border rounded-xl p-2.5 outline-none focus:border-[#5b301f]" value={settings.rnc} onChange={e=>setSettings({...settings, rnc: e.target.value})} /></div>
+                                        </div>
+                                        <div className="mt-4"><label className="block text-xs font-bold text-stone-500 mb-1">Dirección</label>
+                                        <input className="w-full border rounded-xl p-2.5 outline-none focus:border-[#5b301f]" value={settings.address} onChange={e=>setSettings({...settings, address: e.target.value})} /></div>
+                                        <div className="grid grid-cols-2 gap-4 mt-4">
+                                            <div><label className="block text-xs font-bold text-stone-500 mb-1">Teléfono</label>
+                                            <input className="w-full border rounded-xl p-2.5 outline-none focus:border-[#5b301f]" value={settings.phone} onChange={e=>setSettings({...settings, phone: e.target.value})} /></div>
+                                            <div><label className="block text-xs font-bold text-stone-500 mb-1">Email</label>
+                                            <input className="w-full border rounded-xl p-2.5 outline-none focus:border-[#5b301f]" value={settings.email} onChange={e=>setSettings({...settings, email: e.target.value})} /></div>
+                                        </div>
+                                        <div className="mt-4"><label className="block text-xs font-bold text-stone-500 mb-1">Info Bancaria para Pagos</label>
+                                        <textarea className="w-full border rounded-xl p-2.5 outline-none focus:border-[#5b301f] h-20" value={settings.bankInfo} onChange={e=>setSettings({...settings, bankInfo: e.target.value})} /></div>
+                                        <div className="mt-4"><label className="block text-xs font-bold text-stone-500 mb-1">Términos y Condiciones</label>
+                                        <textarea className="w-full border rounded-xl p-2.5 outline-none focus:border-[#5b301f] h-20" value={settings.terms} onChange={e=>setSettings({...settings, terms: e.target.value})} /></div>
+                                        <div className="mt-4"><label className="block text-xs font-bold text-stone-500 mb-1">Nombre del Emisor (Firma)</label>
+                                        <input className="w-full border rounded-xl p-2.5 outline-none focus:border-[#5b301f]" value={settings.creatorName} onChange={e=>setSettings({...settings, creatorName: e.target.value})} /></div>
+                                    </div>
+                                </div>
+                                <div className="p-6 border-t bg-stone-50 flex-shrink-0">
+                                    <button onClick={handleSaveSettings} className="w-full primary-bg text-white py-3 rounded-xl font-bold">Guardar Configuración</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {isQuoteModalOpen && (
+                        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-3xl flex flex-col max-h-[95vh] overflow-hidden">
+                                <div className="p-6 border-b flex justify-between items-center primary-bg text-white flex-shrink-0">
+                                    <h3 className="font-black uppercase tracking-widest text-[11px] flex items-center gap-2">
+                                        <Icon name={editingQuoteId ? "edit" : "file-plus"} size={16}/> 
+                                        {editingQuoteId ? 'Editar Cotización' : 'Nueva Cotización'}
+                                    </h3>
+                                    <button onClick={() => { setIsQuoteModalOpen(false); resetQuoteForm(); }}><Icon name="x" size={20} /></button>
+                                </div>
+                                
+                                <div className="p-4 md:p-8 overflow-y-auto space-y-6 md:space-y-8 flex-grow min-h-0">
+                                    <section>
+                                        <h4 className="text-xs font-black text-[#5b301f] uppercase tracking-widest mb-3 border-b pb-1">Datos del Cliente y Fechas</h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="col-span-1 md:col-span-2">
+                                                <input className="w-full bg-stone-50 border border-stone-200 p-3 rounded-xl outline-none focus:border-[#5b301f]" placeholder="Nombre completo o Razón Social" value={clientName} onChange={e => setClientName(e.target.value)} />
+                                            </div>
+                                            <input className="w-full bg-stone-50 border border-stone-200 p-3 rounded-xl outline-none focus:border-[#5b301f]" placeholder="Teléfono / WhatsApp" value={clientPhone} onChange={e => setClientPhone(e.target.value)} />
+                                            
+                                            <div className="relative">
+                                                <label className="absolute -top-2 left-3 bg-white px-1 text-[10px] font-bold text-stone-400 uppercase">Vencimiento</label>
+                                                <input type="date" className="w-full bg-stone-50 border border-stone-200 p-3 rounded-xl outline-none focus:border-[#5b301f] text-sm" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                                            </div>
+
+                                            <input className="w-full bg-stone-50 border border-stone-200 p-3 rounded-xl outline-none focus:border-[#5b301f] col-span-1 md:col-span-2" placeholder="Dirección" value={clientAddress} onChange={e => setClientAddress(e.target.value)} />
+                                        </div>
+                                    </section>
+
+                                    <section>
+                                        <div className="flex justify-between items-end border-b pb-1 mb-3">
+                                            <h4 className="text-xs font-black text-[#5b301f] uppercase tracking-widest">Servicios / Productos</h4>
+                                        </div>
+                                        
+                                        {items.length > 0 && (
+                                            <div className="mb-4 space-y-2">
+                                                <div className="hidden md:flex gap-2 px-2 text-[10px] font-bold text-stone-400 uppercase tracking-widest">
+                                                    <div className="flex-grow">Descripción</div>
+                                                    <div className="w-16 text-center">Cant.</div>
+                                                    <div className="w-28 text-right">Precio (RD$)</div>
+                                                    <div className="w-8"></div>
+                                                </div>
+                                                {items.map((item, i) => (
+                                                    <div key={i} className="flex flex-wrap md:flex-nowrap gap-2 items-center bg-stone-50 p-3 md:p-2 rounded-xl border border-stone-200">
+                                                        <div className="w-full md:flex-grow text-sm px-2 mb-2 md:mb-0">
+                                                            <span className="md:hidden text-[10px] text-stone-400 uppercase block font-bold mb-1">Descripción</span>
+                                                            {item.desc}
+                                                        </div>
+                                                        <div className="w-[30%] md:w-16 text-center text-sm border-r md:border-none pr-2 md:pr-0">
+                                                            <span className="md:hidden text-[10px] text-stone-400 uppercase block font-bold mb-1">Cant.</span>
+                                                            {item.qty}
+                                                        </div>
+                                                        <div className="w-[45%] md:w-28 text-right text-sm font-bold pl-2 md:pl-0">
+                                                            <span className="md:hidden text-[10px] text-stone-400 uppercase block font-bold mb-1 text-left">Precio</span>
+                                                            {item.price}
+                                                        </div>
+                                                        <button onClick={() => setItems(items.filter((_, idx) => idx !== i))} className="flex-grow md:w-8 text-stone-300 hover:text-rose-500 flex justify-end md:justify-center items-center"><Icon name="trash-2" size={18} /></button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        <div className="bg-stone-50 p-3 rounded-xl border border-stone-200 flex flex-col gap-3">
+                                            <div className="flex flex-col md:flex-row gap-2 items-start">
+                                                <div className="flex-grow w-full">
+                                                    <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 ml-1">Descripción</label>
+                                                    <input className="w-full bg-white border border-stone-200 text-sm p-2.5 rounded-xl outline-none focus:border-[#5b301f]" placeholder="Detalle del producto..." value={newItem.desc} onChange={e => setNewItem({...newItem, desc: e.target.value})} />
+                                                </div>
+                                                <div className="flex gap-2 w-full md:w-auto">
+                                                    <div className="w-1/3 md:w-auto">
+                                                        <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 text-center">Cant.</label>
+                                                        <input className="w-full md:w-20 border border-stone-200 text-center text-sm p-2.5 rounded-xl outline-none focus:border-[#5b301f]" type="number" min="1" placeholder="1" value={newItem.qty} onChange={e => setNewItem({...newItem, qty: e.target.value})} />
+                                                    </div>
+                                                    <div className="w-2/3 md:w-auto">
+                                                        <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 text-right pr-1">Precio (RD$)</label>
+                                                        <input className="w-full md:w-32 border border-stone-200 text-right text-sm p-2.5 rounded-xl outline-none font-bold focus:border-[#5b301f]" type="number" placeholder="0.00" value={newItem.price} onChange={e => setNewItem({...newItem, price: e.target.value})} />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-end mt-1">
+                                                <button 
+                                                    onClick={() => {
+                                                        if(newItem.desc && newItem.price !== '') {
+                                                            setItems([...items, newItem]);
+                                                            setNewItem({ desc: '', qty: 1, price: '' });
+                                                        } else alert("Ingresa una descripción y un precio válido.");
+                                                    }} 
+                                                    className="bg-[#dfdbd0] text-[#5b301f] px-5 py-2 rounded-xl font-bold text-xs hover:brightness-95 transition-all shadow-sm"
+                                                >
+                                                    Agregar Producto
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    <section className="pb-12">
+                                        <h4 className="text-xs font-black text-[#5b301f] uppercase tracking-widest mb-3 border-b pb-1">Observaciones</h4>
+                                        <textarea className="w-full bg-stone-50 border border-stone-200 p-3 rounded-xl outline-none focus:border-[#5b301f] text-sm" placeholder="Notas adicionales específicas para esta cotización..." rows="2" value={observations} onChange={e => setObservations(e.target.value)}></textarea>
+                                    </section>
+                                </div>
+
+                                <div className="bg-stone-100 p-4 md:p-6 flex flex-col md:flex-row justify-between items-center gap-3 md:gap-6 border-t flex-shrink-0">
+                                    <div className="flex flex-col gap-2 md:gap-3 w-full md:w-auto">
+                                        <div className="text-xs font-bold text-stone-500">
+                                            Subtotal: RD$ {totals.sub.toLocaleString('en-US', {minimumFractionDigits:2})}
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-2 text-xs font-bold text-stone-500">
+                                            <span>Descuento:</span>
+                                            <div className="flex border border-stone-300 rounded overflow-hidden bg-white">
+                                                <input type="number" min="0" className="w-16 p-1.5 outline-none text-right" value={discountValue} onChange={e => setDiscountValue(e.target.value)} />
+                                                <select className="bg-stone-50 border-l border-stone-300 p-1.5 outline-none font-medium" value={discountType} onChange={e => setDiscountType(e.target.value)}>
+                                                    <option value="percentage">%</option>
+                                                    <option value="fixed">RD$</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-2 text-xs font-bold text-stone-500 mt-1">
+                                            <label className="flex items-center gap-1.5 cursor-pointer">
+                                                <input type="checkbox" checked={applyTax} onChange={e => setApplyTax(e.target.checked)} className="accent-[#5b301f] w-4 h-4" />
+                                                Aplicar ITBIS
+                                            </label>
+                                            {applyTax && (
+                                                <div className="flex items-center gap-1">
+                                                    (%): <input type="number" className="w-12 text-center border border-stone-300 rounded p-1 outline-none focus:border-[#5b301f] bg-white" value={tax} onChange={e => setTax(Number(e.target.value))} />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="text-right flex-grow w-full md:w-auto border-t md:border-none pt-2 md:pt-0">
+                                        <span className="block text-[10px] font-black uppercase text-stone-400 tracking-widest">Total Neto</span>
+                                        <span className="text-2xl md:text-3xl font-black primary-text">RD$ {totals.total.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
+                                    </div>
+                                </div>
+                                
+                                <div className="p-3 md:p-4 bg-white border-t flex-shrink-0">
+                                    <button onClick={handleSaveQuote} className="w-full primary-bg text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg hover:brightness-110 transition-all text-sm">
+                                        {editingQuoteId ? 'Actualizar Cotización' : 'Guardar Cotización'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {currentQuotePDF && (
+                        <div id="pdf-render-container">
+                            <div id="pdf-template" className="relative w-full h-full bg-white overflow-hidden text-[#5b301f] pdf-font-sans flex flex-col p-[50px]">
+                                <svg className="absolute top-0 right-0 w-[400px] h-[400px] opacity-80" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                                  <path fill="#dfdbd0" d="M51.9,-61.8C65.6,-50.2,74,-31.6,76.5,-12.3C79.1,7,75.8,26.9,64.2,41.9C52.5,56.8,32.4,66.8,11.5,70.5C-9.5,74.2,-31.4,71.5,-47.5,59.9C-63.5,48.2,-73.7,27.5,-75.6,6.3C-77.5,-14.9,-71.2,-36.5,-56.9,-48.7C-42.6,-61,-21.3,-64,-0.4,-63.5C20.4,-63,40.8,-59,51.9,-61.8Z" transform="translate(140 60) scale(1.1)" />
+                                </svg>
+
+                                <div className="relative z-10 flex-grow flex flex-col">
+                                    <div className="flex justify-between items-start mb-16">
+                                        <div className="w-1/2">
+                                            <div className="flex items-center gap-2 mb-4">
+                                                {settings.logo ? (
+                                                    <img src={settings.logo} alt="Logo de la Empresa" className="max-w-[300px] max-h-[120px] object-contain" />
+                                                ) : (
+                                                    <div className="w-10 h-10 rounded-full border border-[#5b301f] flex items-center justify-center pdf-font-serif text-2xl relative">
+                                                        {settings.companyName.charAt(0)}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="text-sm space-y-1 mt-6">
+                                                <div className="font-bold uppercase tracking-widest text-[14px] mb-2">DATOS DEL CLIENTE:</div>
+                                                <div className="font-bold text-base">{currentQuotePDF.clientName}</div>
+                                                <div>{currentQuotePDF.clientAddress}</div>
+                                                <div>{currentQuotePDF.clientPhone}</div>
+                                            </div>
+                                        </div>
+                                        <div className="w-1/2 text-right">
+                                            <h1 className="pdf-font-serif text-5xl font-bold tracking-widest text-[#5b301f] mb-8">COTIZACIÓN</h1>
+                                            <div className="text-sm font-bold tracking-widest uppercase mb-1">Cotización: {currentQuotePDF.quoteId}</div>
+                                            <div className="text-sm font-bold tracking-widest uppercase">Fecha: {currentQuotePDF.dateStr}</div>
+                                            {currentQuotePDF.dueDate && (
+                                                <div className="text-sm font-bold tracking-widest uppercase text-rose-800 mt-1">
+                                                    Vencimiento: {new Date(currentQuotePDF.dueDate).toLocaleDateString('es-DO')}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="mb-8 flex-grow">
+                                        <table className="w-full text-sm">
+                                            <thead>
+                                                <tr className="bg-[#dfdbd0] text-[#5b301f] uppercase tracking-widest text-[11px]">
+                                                    <th className="py-3 px-4 text-left font-bold">Descripción</th>
+                                                    <th className="py-3 px-4 text-center font-bold">Cant.</th>
+                                                    <th className="py-3 px-4 text-right font-bold">Precio</th>
+                                                    <th className="py-3 px-4 text-right font-bold">Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {currentQuotePDF.items.map((item, i) => (
+                                                    <tr key={i} className="border-b border-[#dfdbd0]">
+                                                        <td className="py-4 px-4">{item.desc}</td>
+                                                        <td className="py-4 px-4 text-center">{item.qty}</td>
+                                                        <td className="py-4 px-4 text-right">RD$ {Number(item.price).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+                                                        <td className="py-4 px-4 text-right font-bold">RD$ {(Number(item.qty)*Number(item.price)).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+
+                                        <div className="flex justify-end mt-6">
+                                            <div className="w-1/3 space-y-3 text-sm">
+                                                <div className="flex justify-between font-bold uppercase tracking-widest text-[10px]">
+                                                    <span>Sub Total</span>
+                                                    <span>RD$ {currentQuotePDF.subtotal.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                                                </div>
+                                                
+                                                {currentQuotePDF.discountAmount > 0 && (
+                                                    <div className="flex justify-between font-bold uppercase tracking-widest text-[10px] text-rose-800">
+                                                        <span>Descuento</span>
+                                                        <span>- RD$ {currentQuotePDF.discountAmount.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                                                    </div>
+                                                )}
+
+                                                {currentQuotePDF.applyTax !== false && (
+                                                    <div className="flex justify-between font-bold uppercase tracking-widest text-[10px]">
+                                                        <span>ITBIS ({currentQuotePDF.taxRate}%)</span>
+                                                        <span>RD$ {currentQuotePDF.taxAmount.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                                                    </div>
+                                                )}
+                                                <div className="flex justify-between font-black uppercase tracking-widest text-base pt-3 border-t border-[#dfdbd0]">
+                                                    <span>Total</span>
+                                                    <span>RD$ {currentQuotePDF.total.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-auto border-t border-[#dfdbd0] pt-6 grid grid-cols-3 gap-6 text-[10px] leading-relaxed relative">
+                                        <div className="col-span-1">
+                                            <div className="font-bold uppercase tracking-widest mb-2 text-[#5b301f]">Info de Pago</div>
+                                            <div className="whitespace-pre-line text-stone-600 mb-4">{settings.bankInfo}</div>
+                                            <div className="font-bold uppercase tracking-widest mt-4 mb-2 text-[#5b301f]">{settings.companyName}</div>
+                                            <div className="text-stone-600">{settings.address}</div>
+                                            <div className="text-stone-600">{settings.phone}</div>
+                                            <div className="text-stone-600">{settings.email}</div>
+                                        </div>
+
+                                        <div className="col-span-1">
+                                            <div className="font-bold uppercase tracking-widest mb-2 text-[#5b301f]">Condiciones</div>
+                                            <div className="whitespace-pre-line text-stone-600 mb-4">{settings.terms}</div>
+                                            {currentQuotePDF.observations && (
+                                                <>
+                                                    <div className="font-bold uppercase tracking-widest mt-4 mb-2 text-[#5b301f]">Notas Extra</div>
+                                                    <div className="text-stone-600 italic">{currentQuotePDF.observations}</div>
+                                                </>
+                                            )}
+                                        </div>
+
+                                        <div className="col-span-1 flex flex-col items-center justify-end pb-4">
+                                            <div className="w-40 border-b border-[#5b301f] mb-2 text-center">
+                                                <span className="font-['Playfair_Display'] italic text-2xl text-stone-700 select-none block pb-1">{settings.creatorName}</span>
+                                            </div>
+                                            <div className="font-bold uppercase tracking-widest text-[#5b301f] text-center w-full">{settings.creatorName}</div>
+                                            <div className="text-stone-500 uppercase text-[8px] tracking-widest text-center">Firma Autorizada</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
 </body>
 </html>
