@@ -3,16 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cotizador - Diseño Lite</title>
+    <title>Cotizador - Home Place</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, doc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBS4vxHyeQGzAvjJc16om1x-z5Kp0NVD8A",
+            authDomain: "homeplace-56a02.firebaseapp.com",
+            databaseURL: "https://homeplace-56a02-default-rtdb.firebaseio.com",
+            projectId: "homeplace-56a02",
+            storageBucket: "homeplace-56a02.firebasestorage.app",
+            messagingSenderId: "787190334698",
+            appId: "1:787190334698:web:1317629a0c1a5edd184393"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        // Exponer al scope global para que React lo use
+        window.FirebaseSDK = { 
+            initializeApp, getFirestore, collection, addDoc, 
+            onSnapshot, query, doc, updateDoc, deleteDoc, 
+            getAuth, signInAnonymously, onAuthStateChanged,
+            db, auth 
+        };
+        window.__firebase_config = JSON.stringify(firebaseConfig);
+        window.__app_id = "homeplace-quotes";
+    </script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap');
@@ -20,7 +49,7 @@
         .primary-bg { background-color: #5b301f; }
         .primary-text { color: #5b301f; }
         .secondary-bg { background-color: #dfdbd0; }
-        #pdf-render-container { position: absolute; left: -9999px; top: 0; background: white; width: 794px; height: 1123px; overflow: hidden; z-index: -1; }
+        #pdf-render-container { position: absolute; left: -9999px; top: 0; background: white; width: 794px; height: 1123px; z-index: -1; }
         .loader { border: 4px solid #f3f3f3; border-top: 4px solid #5b301f; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
@@ -31,110 +60,138 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // CONFIGURACIÓN DIRECTA
-        const SUPABASE_URL = 'https://ghzlohohenxihfzqhebz.supabase.co';
-        const SUPABASE_KEY = 'sb_publishable_UBrBbtO4tOG531JuwhXXCw_pugcTYBo';
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
         const Icon = ({ name, size = 18, className = "" }) => {
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
             return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
         };
 
         function App() {
-            // Todos tus estados originales de coti15.html
+            const [db, setDb] = useState(null);
             const [quotes, setQuotes] = useState([]);
             const [loading, setLoading] = useState(true);
+            const [isDemo, setIsDemo] = useState(false);
             const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
             const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
             const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
+            const defaultSettings = {
+                companyName: 'HOME PLACE',
+                address: 'República Dominicana',
+                phone: '+1 809-000-0000',
+                email: 'info@homeplace.com.do',
+                rnc: '000-00000-0',
+                bankInfo: 'Banco Popular\nCuenta Corriente: 000000000',
+                terms: 'Vigencia de 15 días. Pago 50% inicial y 50% contra entrega.',
+                creatorName: 'Admin Home Place',
+                logo: null
+            };
+
             const [settings, setSettings] = useState(() => {
                 const saved = localStorage.getItem('company_settings');
-                return saved ? JSON.parse(saved) : { companyName: 'Tu Empresa S.R.L.', creatorName: 'Admin', rnc: '', phone: '', email: '', address: '', bankInfo: '', terms: '', logo: null };
+                return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
             });
 
-            // Formulario original
+            // Estados del Formulario
             const [clientName, setClientName] = useState('');
+            const [clientPhone, setClientPhone] = useState('');
+            const [clientAddress, setClientAddress] = useState('');
+            const [dueDate, setDueDate] = useState('');
+            const [observations, setObservations] = useState('');
             const [items, setItems] = useState([]);
+            const [newItem, setNewItem] = useState({ desc: '', qty: 1, price: '' });
             const [tax, setTax] = useState(18);
             const [applyTax, setApplyTax] = useState(true);
+            const [discountType, setDiscountType] = useState('percentage');
             const [discountValue, setDiscountValue] = useState(0);
             const [editingQuoteId, setEditingQuoteId] = useState(null);
+            const [currentQuotePDF, setCurrentQuotePDF] = useState(null);
 
-            // CARGA DE DATOS (SUPABASE)
-            const fetchQuotes = async () => {
-                setLoading(true);
-                const { data, error } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
-                if (error) console.error(error);
-                else setQuotes(data || []);
-                setLoading(false);
-            };
+            useEffect(() => {
+                const checkFirebase = setInterval(() => {
+                    if (window.FirebaseSDK && window.FirebaseSDK.db) {
+                        setDb(window.FirebaseSDK.db);
+                        window.FirebaseSDK.signInAnonymously(window.FirebaseSDK.auth)
+                            .then(() => setLoading(false))
+                            .catch(() => { setIsDemo(true); setLoading(false); });
+                        clearInterval(checkFirebase);
+                    }
+                }, 500);
+                return () => clearInterval(checkFirebase);
+            }, []);
 
-            useEffect(() => { fetchQuotes(); }, []);
+            useEffect(() => {
+                if (!db) return;
+                const { collection, query, onSnapshot } = window.FirebaseSDK;
+                const q = query(collection(db, 'quotes'));
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setQuotes(docs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+                });
+                return () => unsubscribe();
+            }, [db]);
 
-            // Lógica de totales igual a la tuya
             const totals = useMemo(() => {
                 const sub = items.reduce((a, b) => a + (Number(b.qty) * Number(b.price)), 0);
-                const disc = Number(discountValue) || 0;
-                const taxAmt = applyTax ? (sub - disc) * (tax / 100) : 0;
-                return { sub, disc, tax: taxAmt, total: sub - disc + taxAmt };
-            }, [items, tax, applyTax, discountValue]);
+                let discountAmt = discountType === 'percentage' ? sub * (Number(discountValue) / 100) : Number(discountValue);
+                const postDiscount = Math.max(0, sub - discountAmt);
+                const tAmount = applyTax ? (postDiscount * Number(tax)) / 100 : 0;
+                return { sub, discountAmt, postDiscount, tax: tAmount, total: postDiscount + tAmount };
+            }, [items, tax, applyTax, discountType, discountValue]);
 
-            // GUARDAR (SUPABASE)
-            const handleSave = async () => {
+            const handleSaveQuote = async () => {
+                if (!clientName || items.length === 0) return alert("Completa los datos");
                 const quoteData = {
-                    client_name: clientName,
-                    items: items,
-                    total: totals.total,
-                    subtotal: totals.sub,
-                    tax_amount: totals.tax,
-                    quote_id: editingQuoteId ? quotes.find(q=>q.id === editingQuoteId).quote_id : `COT-${Date.now().toString().slice(-4)}`
+                    clientName, clientPhone, clientAddress, dueDate, observations, items,
+                    taxRate: tax, applyTax, discountType, discountValue, discountAmount: totals.discountAmt,
+                    subtotal: totals.sub, taxAmount: totals.tax, total: totals.total,
+                    createdAt: Date.now(), dateStr: new Date().toLocaleDateString(),
+                    quoteId: `COT-${Math.floor(1000 + Math.random() * 9000)}`,
+                    status: 'Pendiente'
                 };
 
-                if (editingQuoteId) {
-                    await supabase.from('quotes').update(quoteData).eq('id', editingQuoteId);
-                } else {
-                    await supabase.from('quotes').insert([quoteData]);
-                }
-                setIsQuoteModalOpen(false);
-                fetchQuotes();
+                try {
+                    const { collection, addDoc, doc, updateDoc } = window.FirebaseSDK;
+                    if (editingQuoteId) {
+                        await updateDoc(doc(db, 'quotes', editingQuoteId), quoteData);
+                    } else {
+                        await addDoc(collection(db, 'quotes'), quoteData);
+                    }
+                    setIsQuoteModalOpen(false);
+                    resetForm();
+                } catch (e) { alert("Error al guardar en Firebase"); }
             };
 
-            if (loading) return <div className="h-screen flex items-center justify-center"><div className="loader"></div></div>;
+            const resetForm = () => {
+                setClientName(''); setItems([]); setEditingQuoteId(null);
+            };
+
+            if (loading) return <div className="h-screen flex items-center justify-center flex-col gap-4"><div className="loader"></div><p>Conectando a Home Place...</p></div>;
 
             return (
-                <div className="min-h-screen pb-10">
-                    {/* Header con el botón de AJUSTES que pediste mantener */}
+                <div className="min-h-screen bg-stone-100 pb-10">
                     <header className="bg-white shadow-sm px-6 py-4 flex justify-between items-center sticky top-0 z-40">
-                        <div className="flex items-center gap-3">
-                            <Icon name="file-text" size={24} className="primary-text" />
-                            <h1 className="font-black text-xl primary-text uppercase">Ross Creativo</h1>
+                        <div className="flex items-center gap-2">
+                            <div className="p-2 primary-bg text-white rounded-lg"><Icon name="home" size={24} /></div>
+                            <h1 className="font-black text-xl primary-text">HOME PLACE</h1>
                         </div>
-                        <button onClick={() => setIsSettingsModalOpen(true)} className="flex items-center gap-2 p-2 rounded-lg hover:bg-stone-100 transition-colors">
-                            <Icon name="settings" size={20} />
-                            <span className="text-xs font-bold uppercase tracking-widest">Ajustes</span>
+                        <button onClick={() => setIsQuoteModalOpen(true)} className="primary-bg text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2">
+                            <Icon name="plus" size={18} /> Nueva Cotización
                         </button>
                     </header>
 
                     <main className="max-w-5xl mx-auto p-6">
-                        <div className="flex justify-between items-center mb-10">
-                            <h2 className="text-3xl font-black text-stone-800 uppercase">Cotizaciones</h2>
-                            <button onClick={() => { setEditingQuoteId(null); setClientName(''); setItems([]); setIsQuoteModalOpen(true); }} className="primary-bg text-white px-6 py-3 rounded-xl font-bold shadow-lg">+ NUEVA</button>
-                        </div>
-
                         <div className="grid gap-4">
                             {quotes.map(q => (
-                                <div key={q.id} className="bg-white p-6 rounded-2xl shadow-sm border flex justify-between items-center">
+                                <div key={q.id} className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 flex justify-between items-center">
                                     <div>
-                                        <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{q.quote_id}</span>
-                                        <h3 className="font-bold text-xl">{q.client_name}</h3>
+                                        <span className="text-[10px] font-bold bg-stone-100 px-2 py-1 rounded">{q.quoteId}</span>
+                                        <h3 className="font-bold text-lg mt-1">{q.clientName}</h3>
+                                        <p className="text-sm text-stone-500">{q.dateStr}</p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-2xl font-black primary-text">RD$ {q.total?.toLocaleString()}</p>
-                                        <div className="flex gap-2 justify-end mt-2">
-                                            <button onClick={() => { setEditingQuoteId(q.id); setClientName(q.client_name); setItems(q.items); setIsQuoteModalOpen(true); }} className="p-2 bg-stone-100 rounded-lg"><Icon name="edit-2" size={16}/></button>
-                                            <button onClick={async () => { if(confirm('¿Eliminar?')) { await supabase.from('quotes').delete().eq('id', q.id); fetchQuotes(); } }} className="p-2 bg-rose-50 text-rose-500 rounded-lg"><Icon name="trash-2" size={16}/></button>
+                                        <div className="text-2xl font-black primary-text">RD$ {q.total.toLocaleString()}</div>
+                                        <div className="flex gap-2 mt-2">
+                                            <button onClick={() => { setEditingQuoteId(q.id); setClientName(q.clientName); setItems(q.items); setIsQuoteModalOpen(true); }} className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Icon name="edit" size={16}/></button>
                                         </div>
                                     </div>
                                 </div>
@@ -142,24 +199,36 @@
                         </div>
                     </main>
 
-                    {/* MODAL DE AJUSTES (TU DISEÑO ORIGINAL) */}
-                    {isSettingsModalOpen && (
-                        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                            <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-2xl p-8">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="font-black uppercase tracking-widest">Configuración de Empresa</h3>
-                                    <button onClick={() => setIsSettingsModalOpen(false)}><Icon name="x" /></button>
+                    {/* Modal Simplificado para el ejemplo */}
+                    {isQuoteModalOpen && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                            <div className="bg-white w-full max-w-2xl rounded-3xl p-8 max-h-[90vh] overflow-y-auto">
+                                <h2 className="text-2xl font-black mb-6">Detalles de Cotización</h2>
+                                <input className="w-full border p-3 rounded-xl mb-4" placeholder="Nombre del Cliente" value={clientName} onChange={e => setClientName(e.target.value)} />
+                                
+                                <div className="bg-stone-50 p-4 rounded-xl mb-6">
+                                    <input className="w-full border p-2 rounded-lg mb-2" placeholder="Descripción del producto" value={newItem.desc} onChange={e => setNewItem({...newItem, desc: e.target.value})} />
+                                    <div className="flex gap-2">
+                                        <input type="number" className="w-1/2 border p-2 rounded-lg" placeholder="Cant" value={newItem.qty} onChange={e => setNewItem({...newItem, qty: e.target.value})} />
+                                        <input type="number" className="w-1/2 border p-2 rounded-lg" placeholder="Precio" value={newItem.price} onChange={e => setNewItem({...newItem, price: e.target.value})} />
+                                    </div>
+                                    <button onClick={() => { setItems([...items, newItem]); setNewItem({desc:'', qty:1, price:''}); }} className="mt-2 text-xs font-bold primary-text underline"> + Agregar Item</button>
                                 </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <input className="border p-3 rounded-xl" placeholder="Nombre Empresa" value={settings.companyName} onChange={e=>setSettings({...settings, companyName: e.target.value})} />
-                                    <input className="border p-3 rounded-xl" placeholder="RNC" value={settings.rnc} onChange={e=>setSettings({...settings, rnc: e.target.value})} />
+
+                                <div className="space-y-2 mb-6">
+                                    {items.map((it, i) => <div key={i} className="flex justify-between text-sm border-b pb-1"><span>{it.desc} x{it.qty}</span> <span>RD$ {it.price * it.qty}</span></div>)}
                                 </div>
-                                <button onClick={() => { localStorage.setItem('company_settings', JSON.stringify(settings)); setIsSettingsModalOpen(false); }} className="w-full primary-bg text-white py-4 rounded-xl mt-6 font-bold uppercase">Guardar Cambios</button>
+
+                                <div className="flex justify-between items-center border-t pt-4">
+                                    <span className="font-bold text-xl">Total: RD$ {totals.total.toLocaleString()}</span>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setIsQuoteModalOpen(false)} className="px-4 py-2 text-stone-500 font-bold">Cancelar</button>
+                                        <button onClick={handleSaveQuote} className="primary-bg text-white px-6 py-2 rounded-xl font-bold">Guardar</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}
-                    
-                    {/* El Modal de Cotización y el Render del PDF siguen aquí abajo con tu lógica... */}
                 </div>
             );
         }
