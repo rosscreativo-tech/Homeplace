@@ -38,7 +38,7 @@
 const { useState, useEffect, useMemo, useRef } = React;
 
 const SUPABASE_URL  = "https://ghzlohohenxihfzqhebz.supabase.co";
-const SUPABASE_KEY  = "sb_publishable_UBrBbtO4tOG531JuwhXXCw_pugcTYBo";
+const SUPABASE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdoemxvaG9oZW54aWhmenFoZWJ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjEwOTIsImV4cCI6MjA5MDQ5NzA5Mn0.rv4R4qDmPQia44NVVHQHaHokiHsWYoN4BOoVcsVzwCg"; // ⚠️ Reemplaza con tu anon key (eyJ...) desde Supabase Dashboard → Settings → API
 const ADMIN_EMAIL   = "creativobyross@gmail.com";
 
 const Icon = ({ name, size=18, className="" }) => {
@@ -60,9 +60,13 @@ function LoginScreen({ onLogin }) {
             const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             const { data, error: err } = await client.auth.signInWithPassword({ email, password });
             if (err) throw err;
+            if (!data?.user) throw new Error('Sin usuario');
             const isAdmin = data.user.email === ADMIN_EMAIL;
             onLogin(client, data.user, isAdmin, isAdmin ? 'Admin' : 'KTorres');
-        } catch { setError('Correo o contraseña incorrectos'); }
+        } catch(err) {
+            console.error('Login error:', err);
+            setError('Correo o contraseña incorrectos');
+        }
         finally { setLoading(false); }
     };
 
@@ -170,10 +174,13 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
             try {
                 const { data:sd } = await supabase.from('settings').select('*').eq('id',1).single();
                 if (sd?.data) { setSettings({...defaultSettings,...sd.data}); localStorage.setItem('company_settings',JSON.stringify(sd.data)); }
+            } catch(e){ console.warn('Settings load error:', e); }
+            try {
                 const { data:qd, error } = await supabase.from('quotes').select('*').order('created_at',{ascending:false});
                 if (error) throw error;
                 setQuotes(qd||[]);
-            } catch(e){ console.error(e); } finally { setLoading(false); }
+            } catch(e){ console.warn('Quotes load error:', e); setQuotes([]); }
+            finally { setLoading(false); }
         })();
     }, []);
 
