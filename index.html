@@ -401,19 +401,25 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
                     <div className="bg-[#5b301f] px-6 pt-14 pb-8 relative overflow-hidden md:pt-10">
                         <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/5"></div>
                         <div className="absolute bottom-0 right-12 w-24 h-24 rounded-full bg-[#dfdbd0]/10"></div>
+                        {settings.logo && <img src={settings.logo} alt="" aria-hidden="true" className="absolute right-0 bottom-0 h-28 w-auto object-contain opacity-10 pointer-events-none select-none"/>}
                         <div className="flex justify-between items-start relative z-10 mb-6">
                             <div>
                                 <p className="text-white/60 text-sm font-medium">Bienvenido,</p>
                                 <h1 className="text-white text-2xl font-black tracking-tight">{displayName}</h1>
                                 <p className="text-[#dfdbd0]/70 text-xs mt-0.5 font-medium">{settings.companyName}</p>
                             </div>
-                            <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2">
                                 {settings.logo && <img src={settings.logo} alt="logo" className="h-10 w-auto object-contain rounded-xl"/>}
                                 {isAdmin && (
-                                    <button onClick={()=>setIsSettingsModalOpen(true)} className="w-10 h-10 rounded-2xl bg-white/15 flex items-center justify-center text-white hover:bg-white/25 transition-all">
-                                        <Icon name="settings" size={18}/>
+                                    <button onClick={()=>setIsSettingsModalOpen(true)} className="flex items-center gap-1.5 h-10 px-3 rounded-2xl bg-white/15 text-white hover:bg-white/25 transition-all">
+                                        <Icon name="settings" size={16}/>
+                                        <span className="text-xs font-bold">Ajustes</span>
                                     </button>
                                 )}
+                                <button onClick={onLogout} className="flex items-center gap-1.5 h-10 px-3 rounded-2xl bg-white/10 text-white/70 hover:bg-white/20 transition-all md:hidden">
+                                    <Icon name="log-out" size={16}/>
+                                    <span className="text-xs font-bold">Salir</span>
+                                </button>
                             </div>
                         </div>
                         <div className="grid grid-cols-3 gap-3 relative z-10">
@@ -448,7 +454,7 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
                             {quotes.slice(0,4).map((q,i)=>{
                             const sc=SC[q.status||'Pendiente'];
                             return (
-                                <div key={q.id||i} className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 flex items-center gap-3">
+                                <div key={q.id||i} onClick={()=>handleEditQuote(q)} className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 flex items-center gap-3 cursor-pointer hover:shadow-md hover:border-[#5b301f]/20 transition-all active:scale-[0.98]">
                                     <div className="w-11 h-11 rounded-2xl bg-[#f0ede8] flex items-center justify-center flex-shrink-0">
                                         <Icon name="user" size={18} className="text-[#5b301f]"/>
                                     </div>
@@ -572,9 +578,8 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
                 {/* FAB → New Quote button on desktop */}
                 <button onClick={()=>{setActiveTab('quotes');setIsQuoteModalOpen(true);}}
                     className="w-14 h-14 rounded-full bg-[#5b301f] text-white flex items-center justify-center shadow-2xl hover:brightness-110 transition-all -mt-7 flex-shrink-0 mx-2
-                    md:w-auto md:h-auto md:rounded-2xl md:mt-0 md:mx-0 md:px-4 md:py-3 md:justify-start md:gap-3 md:shadow-none md:shadow-lg md:mt-2">
-                    <Icon name="plus" size={24} className="md:hidden"/>
-                    <Icon name="plus" size={18} className="hidden md:inline-block"/>
+                    md:w-auto md:h-auto md:rounded-2xl md:mt-0 md:mx-0 md:px-4 md:py-3 md:justify-start md:gap-3 md:shadow-lg">
+                    <Icon name="plus" size={22}/>
                     <span className="hidden md:inline font-bold text-sm">Nueva Cotización</span>
                 </button>
 
