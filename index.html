@@ -30,6 +30,9 @@
         .no-scrollbar::-webkit-scrollbar { display:none; }
         .no-scrollbar { -ms-overflow-style:none; scrollbar-width:none; }
         input:focus, textarea:focus, select:focus { outline:none; border-color:#5b301f !important; box-shadow:0 0 0 3px rgba(91,48,31,0.1); }
+        @media (min-width: 768px) {
+            .bottom-nav { order: -1; }
+        }
     </style>
 </head>
 <body>
@@ -372,7 +375,7 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
     );
 
     return (
-        <div className="h-screen flex flex-col bg-[#f0ede8] max-w-lg mx-auto relative overflow-hidden">
+        <div className="h-screen flex flex-col bg-[#f0ede8] relative overflow-hidden md:flex-row">
 
             {/* Toast */}
             {toast && (
@@ -389,10 +392,13 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
                 </div>
             )}
 
+            {/* ── CONTENT AREA ── */}
+            <div className="flex-1 flex flex-col overflow-hidden md:h-full">
+
             {/* ── HOME TAB ── */}
             {activeTab==='home' && (
-                <div className="flex-1 overflow-y-auto no-scrollbar pb-28">
-                    <div className="bg-[#5b301f] px-6 pt-14 pb-8 relative overflow-hidden">
+                <div className="flex-1 overflow-y-auto no-scrollbar pb-28 md:pb-8">
+                    <div className="bg-[#5b301f] px-6 pt-14 pb-8 relative overflow-hidden md:pt-10">
                         <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/5"></div>
                         <div className="absolute bottom-0 right-12 w-24 h-24 rounded-full bg-[#dfdbd0]/10"></div>
                         <div className="flex justify-between items-start relative z-10 mb-6">
@@ -437,10 +443,12 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
                                 <Icon name="file-text" size={32} className="text-stone-200 mx-auto mb-3"/>
                                 <p className="text-stone-400 text-xs font-bold uppercase tracking-widest">Sin cotizaciones aún</p>
                             </div>
-                        ) : quotes.slice(0,4).map((q,i)=>{
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {quotes.slice(0,4).map((q,i)=>{
                             const sc=SC[q.status||'Pendiente'];
                             return (
-                                <div key={q.id||i} className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 mb-3 flex items-center gap-3">
+                                <div key={q.id||i} className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 flex items-center gap-3">
                                     <div className="w-11 h-11 rounded-2xl bg-[#f0ede8] flex items-center justify-center flex-shrink-0">
                                         <Icon name="user" size={18} className="text-[#5b301f]"/>
                                     </div>
@@ -455,14 +463,16 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
                                 </div>
                             );
                         })}
+                        </div>
+                        )}
                     </div>
                 </div>
             )}
 
             {/* ── QUOTES TAB ── */}
             {activeTab==='quotes' && (
-                <div className="flex-1 overflow-y-auto no-scrollbar pb-28">
-                    <div className="bg-[#5b301f] px-6 pt-14 pb-5">
+                <div className="flex-1 overflow-y-auto no-scrollbar pb-28 md:pb-8">
+                    <div className="bg-[#5b301f] px-6 pt-14 pb-5 md:pt-10">
                         <h2 className="text-white font-black text-2xl">Cotizaciones</h2>
                         <p className="text-white/50 text-xs font-medium mt-1">{quotes.length} en total</p>
                     </div>
@@ -474,7 +484,7 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
                             </button>
                         ))}
                     </div>
-                    <div className="px-5 space-y-3">
+                    <div className="px-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                         {filteredQuotes.length===0 ? (
                             <div className="bg-white rounded-3xl p-12 text-center shadow-sm border border-stone-100">
                                 <Icon name="search" size={32} className="text-stone-200 mx-auto mb-3"/>
@@ -532,31 +542,63 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
                 </div>
             )}
 
-            {/* ── BOTTOM NAV ── */}
-            <div className="bottom-nav bg-white border-t border-stone-100 flex items-center px-4 pt-3 pb-2 gap-1 shadow-2xl flex-shrink-0 relative z-40">
-                <button onClick={()=>setActiveTab('home')} className={`flex-1 flex flex-col items-center gap-1 py-1 rounded-2xl transition-all ${activeTab==='home'?'text-[#5b301f]':'text-stone-400'}`}>
+            </div>{/* end content area */}
+
+            {/* ── BOTTOM NAV / SIDEBAR ── */}
+            <div className="bottom-nav bg-white border-t border-stone-100 flex items-center px-4 pt-3 pb-2 gap-1 shadow-2xl flex-shrink-0 relative z-40 order-last
+                md:order-first md:flex-col md:justify-start md:items-stretch md:border-t-0 md:border-r md:border-stone-100 md:w-56 md:h-full md:px-3 md:pt-8 md:pb-6 md:gap-1">
+                
+                {/* Logo/Brand - only on desktop */}
+                <div className="hidden md:block px-3 mb-8">
+                    <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-2xl bg-[#5b301f] flex items-center justify-center flex-shrink-0">
+                            <Icon name="file-text" size={18} className="text-white"/>
+                        </div>
+                        <div>
+                            <div className="font-black text-stone-800 text-sm leading-none">Cotizador</div>
+                            <div className="text-stone-400 text-[10px] font-medium mt-0.5">{settings.companyName}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <button onClick={()=>setActiveTab('home')} className={`flex-1 flex flex-col items-center gap-1 py-1 rounded-2xl transition-all
+                    md:flex-none md:flex-row md:gap-3 md:px-4 md:py-3 md:rounded-2xl md:items-center md:justify-start
+                    ${activeTab==='home'?'text-[#5b301f] md:bg-[#5b301f]/10':'text-stone-400 md:hover:bg-stone-100'}`}>
                     <Icon name="home" size={20}/>
-                    <span className="text-[10px] font-bold">Inicio</span>
-                    {activeTab==='home'&&<div className="w-1 h-1 rounded-full bg-[#5b301f]"></div>}
+                    <span className="text-[10px] font-bold md:text-sm md:font-semibold">Inicio</span>
+                    {activeTab==='home'&&<div className="w-1 h-1 rounded-full bg-[#5b301f] md:hidden"></div>}
                 </button>
 
-                {/* FAB */}
+                {/* FAB → New Quote button on desktop */}
                 <button onClick={()=>{setActiveTab('quotes');setIsQuoteModalOpen(true);}}
-                    className="w-14 h-14 rounded-full bg-[#5b301f] text-white flex items-center justify-center shadow-2xl hover:brightness-110 transition-all -mt-7 flex-shrink-0 mx-2">
-                    <Icon name="plus" size={24}/>
+                    className="w-14 h-14 rounded-full bg-[#5b301f] text-white flex items-center justify-center shadow-2xl hover:brightness-110 transition-all -mt-7 flex-shrink-0 mx-2
+                    md:w-auto md:h-auto md:rounded-2xl md:mt-0 md:mx-0 md:px-4 md:py-3 md:justify-start md:gap-3 md:shadow-none md:shadow-lg md:mt-2">
+                    <Icon name="plus" size={24} className="md:hidden"/>
+                    <Icon name="plus" size={18} className="hidden md:inline-block"/>
+                    <span className="hidden md:inline font-bold text-sm">Nueva Cotización</span>
                 </button>
 
-                <button onClick={()=>setActiveTab('quotes')} className={`flex-1 flex flex-col items-center gap-1 py-1 rounded-2xl transition-all ${activeTab==='quotes'?'text-[#5b301f]':'text-stone-400'}`}>
+                <button onClick={()=>setActiveTab('quotes')} className={`flex-1 flex flex-col items-center gap-1 py-1 rounded-2xl transition-all
+                    md:flex-none md:flex-row md:gap-3 md:px-4 md:py-3 md:rounded-2xl md:items-center md:justify-start
+                    ${activeTab==='quotes'?'text-[#5b301f] md:bg-[#5b301f]/10':'text-stone-400 md:hover:bg-stone-100'}`}>
                     <Icon name="file-text" size={20}/>
-                    <span className="text-[10px] font-bold">Cotizaciones</span>
-                    {activeTab==='quotes'&&<div className="w-1 h-1 rounded-full bg-[#5b301f]"></div>}
+                    <span className="text-[10px] font-bold md:text-sm md:font-semibold">Cotizaciones</span>
+                    {activeTab==='quotes'&&<div className="w-1 h-1 rounded-full bg-[#5b301f] md:hidden"></div>}
                 </button>
+
+                {/* Logout - only on desktop */}
+                <div className="hidden md:block mt-auto">
+                    <button onClick={onLogout} className="flex items-center gap-3 px-4 py-3 rounded-2xl text-stone-400 hover:bg-stone-100 hover:text-stone-600 transition-all w-full">
+                        <Icon name="log-out" size={18}/>
+                        <span className="text-sm font-semibold">Salir</span>
+                    </button>
+                </div>
             </div>
 
             {/* ── MODAL COTIZACIÓN ── */}
             {isQuoteModalOpen && (
-                <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end justify-center">
-                    <div className="bg-[#f0ede8] rounded-t-[2rem] shadow-2xl w-full max-w-lg flex flex-col h-[96vh] overflow-hidden slide-up">
+                <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end justify-center md:items-center">
+                    <div className="bg-[#f0ede8] rounded-t-[2rem] shadow-2xl w-full max-w-lg flex flex-col h-[96vh] overflow-hidden slide-up md:rounded-[2rem] md:h-[90vh] md:max-w-2xl">
                         <div className="bg-[#5b301f] px-6 py-5 flex justify-between items-center flex-shrink-0 rounded-t-[2rem]">
                             <div>
                                 <h3 className="text-white font-black text-base">{editingQuoteId?'Editar Cotización':'Nueva Cotización'}</h3>
@@ -656,8 +698,8 @@ function MainApp({ supabase, user, isAdmin, displayName, onLogout }) {
 
             {/* ── MODAL AJUSTES ── */}
             {isSettingsModalOpen && (
-                <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end justify-center">
-                    <div className="bg-[#f0ede8] rounded-t-[2rem] shadow-2xl w-full max-w-lg flex flex-col h-[96vh] overflow-hidden slide-up">
+                <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end justify-center md:items-center">
+                    <div className="bg-[#f0ede8] rounded-t-[2rem] shadow-2xl w-full max-w-lg flex flex-col h-[96vh] overflow-hidden slide-up md:rounded-[2rem] md:h-[90vh] md:max-w-2xl">
                         <div className="bg-[#5b301f] px-6 py-5 flex justify-between items-center flex-shrink-0 rounded-t-[2rem]">
                             <h3 className="text-white font-black text-base">Ajustes</h3>
                             <button onClick={()=>setIsSettingsModalOpen(false)} className="w-9 h-9 rounded-full bg-white/15 flex items-center justify-center text-white"><Icon name="x" size={18}/></button>
